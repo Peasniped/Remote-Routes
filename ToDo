@@ -6,6 +6,10 @@ Add Web Hosts (shortcuts to admin pages etc.)
 
 Add badge to remote host showing protocol SSH/RDP/WEB
 
+Add Error handling
+- Ex ssh: connect to host 10.50.26.58 port 22: Connection refused
+- Ex incorrect password
+
 custom background images for hosts.
 - maybe possible to pick from a few pre-defined ones, or even upload your own? (maybe able to pull from some API?)
 - Settings: controlling screenshot behaviour if custom backgrounds are enabled (when to show screenshots and when to show the custom background instead -- ie show screenshots for active connections, but show custom background for inactive ones)
