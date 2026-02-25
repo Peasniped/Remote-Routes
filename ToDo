@@ -1,8 +1,9 @@
-Propper attributions for icons from svgrepo.com used in the app, ahead of moving repo to public access.
+!! Propper attributions for icons from svgrepo.com used in the app, ahead of moving repo to public access.
 
-Add Web Hosts (shortcuts to admin pages etc.)
+Add Web Hosts (shortcuts to services/admin pages etc.)
 - primary/secondary host so it can try dns first, then fallback to ip if it does not work
 - choose between http/https and port for each
+- no support for credentials, as I use 1Password
 
 Add badge to remote host showing protocol SSH/RDP/WEB
 
@@ -27,3 +28,5 @@ Host grouping: Can create/rename/remove host groups and assign hosts to one or m
 
 Reordering of hosts and groups with simple drag and drop
 - - groups can be dragged over/under the ungrouped-group, and will retain their place.
+
+How are passwords stored? -- are they safe?
