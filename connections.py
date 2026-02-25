@@ -8,10 +8,7 @@ import sys
 def _find_terminal() -> list[str]:
     """Return a command prefix that opens a new terminal window."""
     if sys.platform == "win32":
-        # Windows Terminal → conhost fallback
-        if shutil.which("wt"):
-            return ["wt", "--"]
-        return ["cmd", "/c", "start", "cmd", "/k"]
+        return []  # Windows uses CREATE_NEW_CONSOLE instead
 
     if sys.platform == "darwin":
         return []  # macOS handled via `open -a Terminal`
@@ -35,37 +32,37 @@ def _find_terminal() -> list[str]:
     )
 
 
-def launch_ssh(host: str, port: int, username: str) -> None:
-    """Open an SSH session in the default terminal emulator."""
+def launch_ssh(host: str, port: int, username: str) -> subprocess.Popen:
+    """Open an SSH session and return the process handle."""
     ssh_cmd = ["ssh", "-p", str(port), f"{username}@{host}"]
 
+    if sys.platform == "win32":
+        # Open SSH in its own console window so we can track the process
+        return subprocess.Popen(
+            ssh_cmd, creationflags=subprocess.CREATE_NEW_CONSOLE
+        )
+
     if sys.platform == "darwin":
-        # macOS: ask Terminal.app to run the command
         script = f'tell application "Terminal" to do script "{" ".join(ssh_cmd)}"'
-        subprocess.Popen(["osascript", "-e", script])
-        return
+        return subprocess.Popen(["osascript", "-e", script])
 
     prefix = _find_terminal()
-    subprocess.Popen(prefix + ssh_cmd)
+    return subprocess.Popen(prefix + ssh_cmd)
 
 
-def launch_rdp(host: str, port: int, username: str) -> None:
-    """Open an RDP session using the platform's default RDP client."""
+def launch_rdp(host: str, port: int, username: str) -> subprocess.Popen:
+    """Open an RDP session and return the process handle."""
     if sys.platform == "win32":
-        # mstsc ships with every modern Windows installation
         mstsc_args = ["mstsc", f"/v:{host}:{port}"]
         if username:
             mstsc_args += [f"/u:{username}"]
-        subprocess.Popen(mstsc_args)
-        return
+        return subprocess.Popen(mstsc_args)
 
     if sys.platform == "darwin":
-        # Microsoft Remote Desktop for macOS (App Store)
         rdp_url = f"rdp://full%20address=s:{host}:{port}"
         if username:
             rdp_url += f"&username=s:{username}"
-        subprocess.Popen(["open", rdp_url])
-        return
+        return subprocess.Popen(["open", rdp_url])
 
     # Linux: prefer xfreerdp, fall back to rdesktop
     if shutil.which("xfreerdp"):
@@ -76,23 +73,62 @@ def launch_rdp(host: str, port: int, username: str) -> None:
             "/dynamic-resolution",
             "/cert-ignore",
         ]
-        subprocess.Popen(cmd)
-        return
+        return subprocess.Popen(cmd)
 
     if shutil.which("rdesktop"):
-        subprocess.Popen(["rdesktop", "-u", username, f"{host}:{port}"])
-        return
+        return subprocess.Popen(["rdesktop", "-u", username, f"{host}:{port}"])
 
     raise RuntimeError(
         "No RDP client found. Please install xfreerdp (freerdp2-x11) or rdesktop."
     )
 
 
-def launch(conn_type: str, host: str, port: int, username: str) -> None:
-    """Dispatch to the appropriate launcher based on connection type."""
+def launch(conn_type: str, host: str, port: int, username: str) -> subprocess.Popen:
+    """Dispatch to the appropriate launcher and return the process handle."""
     if conn_type == "SSH":
-        launch_ssh(host, port, username)
+        return launch_ssh(host, port, username)
     elif conn_type == "RDP":
-        launch_rdp(host, port, username)
+        return launch_rdp(host, port, username)
     else:
         raise ValueError(f"Unknown connection type: {conn_type}")
+
+
+# ── Window management (Windows only) ─────────────────────────────────────────
+
+def bring_process_to_front(pid: int) -> bool:
+    """Attempt to bring the main visible window of *pid* to the foreground.
+
+    Returns True if a matching window was found and activated.
+    """
+    if sys.platform != "win32":
+        return False
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        user32 = ctypes.windll.user32
+        WNDENUMPROC = ctypes.WINFUNCTYPE(
+            wintypes.BOOL, wintypes.HWND, wintypes.LPARAM
+        )
+
+        found: list[int] = []
+
+        def _cb(hwnd, _lparam):
+            if user32.IsWindowVisible(hwnd):
+                win_pid = wintypes.DWORD()
+                user32.GetWindowThreadProcessId(hwnd, ctypes.byref(win_pid))
+                if win_pid.value == pid:
+                    found.append(hwnd)
+            return True
+
+        user32.EnumWindows(WNDENUMPROC(_cb), 0)
+
+        if found:
+            hwnd = found[0]
+            SW_RESTORE = 9
+            user32.ShowWindow(hwnd, SW_RESTORE)
+            user32.SetForegroundWindow(hwnd)
+            return True
+    except Exception:
+        pass
+    return False
