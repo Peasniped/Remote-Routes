@@ -1,5 +1,11 @@
 Propper attributions for icons from svgrepo.com used in the app, ahead of moving repo to public access.
 
+Add Web Hosts (shortcuts to admin pages etc.)
+- primary/secondary host so it can try dns first, then fallback to ip if it does not work
+- choose between http/https and port for each
+
+Add badge to remote host showing protocol SSH/RDP/WEB
+
 custom background images for hosts.
 - maybe possible to pick from a few pre-defined ones, or even upload your own? (maybe able to pull from some API?)
 - Settings: controlling screenshot behaviour if custom backgrounds are enabled (when to show screenshots and when to show the custom background instead -- ie show screenshots for active connections, but show custom background for inactive ones)
