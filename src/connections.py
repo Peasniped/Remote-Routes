@@ -9,6 +9,23 @@ from typing import Optional
 log = logging.getLogger("connections")
 
 
+def is_window_valid(hwnd: int) -> bool:
+    """Return True if *hwnd* is still a live, visible window."""
+    if sys.platform != "win32" or not hwnd:
+        return False
+    try:
+        import ctypes
+        from ctypes import wintypes
+        user32 = ctypes.windll.user32
+        user32.IsWindow.argtypes = [wintypes.HWND]
+        user32.IsWindow.restype = wintypes.BOOL
+        user32.IsWindowVisible.argtypes = [wintypes.HWND]
+        user32.IsWindowVisible.restype = wintypes.BOOL
+        return bool(user32.IsWindow(hwnd) and user32.IsWindowVisible(hwnd))
+    except Exception:
+        return False
+
+
 def _find_terminal() -> list[str]:
     """Return a command prefix that opens a new terminal window."""
     if sys.platform == "win32":

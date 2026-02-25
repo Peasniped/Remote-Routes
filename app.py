@@ -10,12 +10,13 @@ import time
 from typing import Optional
 
 from PySide6.QtCore import Qt, QRectF, QTimer, Signal, QObject, QPoint, QBuffer, QByteArray, QIODevice
-from PySide6.QtGui import QColor, QFont, QImage, QPalette, QPainter, QPainterPath, QPen, QPixmap
+from PySide6.QtGui import QBitmap, QColor, QFont, QImage, QPalette, QPainter, QPainterPath, QPen, QPixmap, QRegion
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
     QDialog,
     QFrame,
+    QGraphicsBlurEffect,
     QGridLayout,
     QHBoxLayout,
     QLabel,
@@ -199,14 +200,15 @@ QPushButton#btn_add {
     background-color: #16a34a; color: white;
     border: none; border-radius: 8px;
     font-size: 22px; font-weight: bold;
+    padding-top: 3px;
 }
 QPushButton#btn_add:hover { background-color: #15803d; }
 
 QPushButton#btn_settings {
-    background-color: #3a3a3a; color: #ccc;
+    background-color: #475569; color: #e2e8f0;
     border: none; border-radius: 8px; font-size: 17px;
 }
-QPushButton#btn_settings:hover { background-color: #4a4a4a; }
+QPushButton#btn_settings:hover { background-color: #64748b; }
 
 /* ─ dialog / page buttons ─ */
 QPushButton#btn_back {
@@ -560,7 +562,10 @@ _CARD_BG = QColor("#2d2d2d")
 _CARD_RADIUS = 22.0
 _OVERLAY_COLOR = QColor(0, 0, 0, 160)   # semi-transparent dark fade
 _BORDER_ACTIVE = QColor("#22c55e")
+_BORDER_CONNECTING = QColor("#eab308")
 _BORDER_WIDTH = 2.0
+_HOVER_COLOR = QColor(37, 99, 235, 100)       # semi-transparent blue overlay on hover
+_CONNECTING_OVERLAY = QColor(0, 0, 0, 180)   # semi-transparent dark
 
 
 class CardInner(QFrame):
@@ -570,6 +575,13 @@ class CardInner(QFrame):
         super().__init__(parent)
         self._bg_pixmap: QPixmap | None = None
         self._active = False
+        self._connecting = False
+        self._hover = False
+        # Blur effect (disabled by default)
+        self._blur_effect = QGraphicsBlurEffect(self)
+        self._blur_effect.setBlurRadius(12)
+        self._blur_effect.setEnabled(False)
+        self.setGraphicsEffect(self._blur_effect)
         # Let QSS handle nothing — we do all painting ourselves.
         self.setStyleSheet("background: transparent; border: none;")
 
@@ -579,6 +591,16 @@ class CardInner(QFrame):
 
     def set_active(self, active: bool) -> None:
         self._active = active
+        self.update()
+
+    def set_connecting(self, connecting: bool) -> None:
+        self._connecting = connecting
+        self._blur_effect.setEnabled(connecting)
+        self.update()
+
+    def set_hover(self, hover: bool) -> None:
+        self._hover = hover
+        self._blur_effect.setEnabled(hover or self._connecting)
         self.update()
 
     def paintEvent(self, event) -> None:
@@ -600,18 +622,95 @@ class CardInner(QFrame):
             scaled = self._bg_pixmap.scaled(
                 w, h, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation
             )
-            # Centre-crop
             x = (scaled.width() - w) // 2
             y = (scaled.height() - h) // 2
             painter.drawPixmap(0, 0, scaled, x, y, w, h)
-            # Dark overlay for legibility
             painter.fillRect(rect, _OVERLAY_COLOR)
 
-        # 3) Active border
-        if self._active:
-            painter.setClipping(False)
-            border_pen = QPen(_BORDER_ACTIVE, _BORDER_WIDTH)
-            painter.setPen(border_pen)
+        painter.end()
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  Overlay painted on top of all card children (hover / connecting)
+# ═══════════════════════════════════════════════════════════════════════════════
+class CardOverlay(QWidget):
+    """Transparent widget that sits above all card children and paints overlays."""
+
+    def __init__(self, parent: QWidget | None = None):
+        super().__init__(parent)
+        self.setAttribute(Qt.WA_TransparentForMouseEvents)  # clicks pass through
+        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setStyleSheet("background: transparent; border: none;")
+        self._hover = False
+        self._hover_text = ""
+        self._connecting = False
+        self._connecting_text = ""
+        self._active = False
+
+    def set_active(self, active: bool) -> None:
+        self._active = active
+        self.update()
+
+    def set_hover(self, hover: bool, text: str = "") -> None:
+        self._hover = hover
+        self._hover_text = text
+        self.update()
+
+    def set_connecting(self, connecting: bool) -> None:
+        self._connecting = connecting
+        self.update()
+
+    def set_connecting_text(self, text: str) -> None:
+        self._connecting_text = text
+        self.update()
+
+    def paintEvent(self, event) -> None:
+        show_hover = self._hover and not self._connecting
+        show_connecting = self._connecting
+        show_border = self._connecting or self._active
+        if not show_hover and not show_connecting and not show_border:
+            return
+
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        w, h = self.width(), self.height()
+        rect = QRectF(0, 0, w, h)
+        path = QPainterPath()
+        path.addRoundedRect(rect, _CARD_RADIUS, _CARD_RADIUS)
+        painter.setClipPath(path)
+
+        if show_hover:
+            painter.fillRect(rect, _HOVER_COLOR)
+            f = painter.font()
+            f.setPointSize(13)
+            f.setBold(True)
+            painter.setFont(f)
+            painter.setPen(QColor("white"))
+            painter.drawText(rect, Qt.AlignCenter, self._hover_text)
+
+        if show_connecting:
+            painter.fillRect(rect, _CONNECTING_OVERLAY)
+            f = painter.font()
+            f.setPointSize(12)
+            f.setBold(True)
+            painter.setFont(f)
+            painter.setPen(QColor("#eab308"))
+            painter.drawText(rect, Qt.AlignCenter, self._connecting_text)
+
+        # Border (painted above blur effect)
+        painter.setClipping(False)
+        if self._connecting:
+            pen = QPen(_BORDER_CONNECTING, _BORDER_WIDTH)
+            painter.setPen(pen)
+            painter.setBrush(Qt.NoBrush)
+            inset = _BORDER_WIDTH / 2
+            painter.drawRoundedRect(
+                QRectF(inset, inset, w - _BORDER_WIDTH, h - _BORDER_WIDTH),
+                _CARD_RADIUS, _CARD_RADIUS,
+            )
+        elif self._active:
+            pen = QPen(_BORDER_ACTIVE, _BORDER_WIDTH)
+            painter.setPen(pen)
             painter.setBrush(Qt.NoBrush)
             inset = _BORDER_WIDTH / 2
             painter.drawRoundedRect(
@@ -634,11 +733,16 @@ class HostCard(QWidget):
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setCursor(Qt.PointingHandCursor)
         self.setFixedSize(CARD_W, CARD_H)
+        self._apply_mask()
 
         self._record = record
         self._on_left = on_left_click
         self._on_right = on_right_click
         self._active_count = 0
+        self._connecting = False
+        self._dot_timer = QTimer(self)
+        self._dot_timer.timeout.connect(self._animate_dots)
+        self._dot_count = 0
 
         # ── inner card frame ──────────────────────────────────────────────
         self._inner = CardInner(self)
@@ -680,14 +784,40 @@ class HostCard(QWidget):
         )
         info_layout.addWidget(self._addr_lbl)
 
+        self._info_widget = info   # store ref for hide/show
         card_layout.addWidget(info)
         card_layout.addStretch(1)
 
         # ── trapezoid badge (child of self, floats centred at top of _inner) ─
         self._badge = ActiveBadge(self)
+
+        # ── overlay for hover / connecting (sits above everything) ────────
+        self._overlay = CardOverlay(self)
+        self._overlay.setGeometry(0, 0, CARD_W, CARD_H)
+        self._overlay.raise_()
+
+        # Badge must be above overlay so it isn't tinted
         self._badge.raise_()
 
+        # ── hover / connecting state ──────────────────────────────────────
+        self._hover_active = False
+        self._hover_text = ""
+        self._connecting_text = ""
+
     # ── helpers ───────────────────────────────────────────────────────────
+    def _apply_mask(self) -> None:
+        """Clip HostCard to a rounded rect so blurred CardInner can't bleed past corners."""
+        bmp = QBitmap(self.size())
+        bmp.fill(Qt.color0)
+        p = QPainter(bmp)
+        p.setRenderHint(QPainter.Antialiasing)
+        p.setBrush(Qt.color1)
+        p.setPen(Qt.NoPen)
+        p.drawRoundedRect(QRectF(0, 0, self.width(), self.height()),
+                          _CARD_RADIUS, _CARD_RADIUS)
+        p.end()
+        self.setMask(bmp)
+
     def _place_badge(self) -> None:
         """Centre the badge horizontally, flush with the card's top edge."""
         bw = self._badge.width()
@@ -702,6 +832,23 @@ class HostCard(QWidget):
             self._on_right(self._record, event.globalPosition().toPoint())
         super().mousePressEvent(event)
 
+    def enterEvent(self, event) -> None:
+        if not self._connecting:
+            if self._active_count > 0:
+                self._hover_text = "Bring to front"
+            else:
+                self._hover_text = "Connect"
+            self._hover_active = True
+            self._inner.set_hover(True)
+            self._overlay.set_hover(True, self._hover_text)
+        super().enterEvent(event)
+
+    def leaveEvent(self, event) -> None:
+        self._hover_active = False
+        self._inner.set_hover(False)
+        self._overlay.set_hover(False)
+        super().leaveEvent(event)
+
     # ── public API ────────────────────────────────────────────────────────
     def set_online(self, online: bool | None) -> None:
         self._ping_dot.set_color(
@@ -710,17 +857,43 @@ class HostCard(QWidget):
 
     def set_active_count(self, count: int) -> None:
         self._active_count = count
-        if count > 0:
-            self._inner.set_active(True)
+        active = count > 0
+        self._inner.set_active(active)
+        self._overlay.set_active(active)
+        if active:
             self._badge.setText("Active" if count == 1 else f"{count} active")
             self._place_badge()
         else:
-            self._inner.set_active(False)
             self._badge.setText("")   # hides automatically
 
     def set_background(self, pixmap: QPixmap | None) -> None:
         """Set a screenshot as the card background (with dark overlay)."""
         self._inner.set_background(pixmap)
+
+    def set_connecting(self, connecting: bool) -> None:
+        """Show/hide the 'Connecting...' animation with yellow border."""
+        self._connecting = connecting
+        if connecting:
+            self._dot_count = 0
+            self._inner.set_connecting(True)
+            self._connecting_text = "Connecting"
+            self._overlay.set_connecting(True)
+            self._overlay.set_connecting_text("Connecting")
+            self._dot_timer.start(500)
+            self.setCursor(Qt.ForbiddenCursor)
+        else:
+            self._dot_timer.stop()
+            self._inner.set_connecting(False)
+            self._connecting_text = ""
+            self._overlay.set_connecting(False)
+            self._overlay.set_connecting_text("")
+            self.setCursor(Qt.PointingHandCursor)
+
+    def _animate_dots(self) -> None:
+        self._dot_count = (self._dot_count + 1) % 4
+        dots = "." * self._dot_count
+        self._connecting_text = f"Connecting{dots}"
+        self._overlay.set_connecting_text(self._connecting_text)
 
     @property
     def record(self):
@@ -739,7 +912,7 @@ class CardGrid(QWidget):
         self._layout = QGridLayout(self)
         self._layout.setSpacing(CARD_GAP)
         self._layout.setContentsMargins(12, 12, 12, 12)
-        self._layout.setAlignment(Qt.AlignTop | Qt.AlignLeft)
+        self._layout.setAlignment(Qt.AlignTop | Qt.AlignHCenter)
 
     def set_cards(self, cards: list[HostCard]) -> None:
         for card in self._cards:
@@ -915,7 +1088,7 @@ class App(QMainWindow):
         super().__init__()
         self.setWindowTitle("Remote Routes")
         self.resize(820, 540)
-        self.setMinimumSize(640, 420)
+        self.setMinimumSize(CARD_W + 48, 420)
 
         database.init_db()
 
@@ -924,7 +1097,9 @@ class App(QMainWindow):
         self._cards: dict[int, HostCard] = {}
         self._snap_hwnds: dict[int, list[int]] = {}   # cid → cached HWNDs
         self._snap_tags: dict[int, list[str]] = {}     # cid → title hints (accumulated)
+        self._popen_hwnds: set[int] = set()             # HWNDs discovered for Popen-backed launches
         self._launch_counter: int = 0                   # unique tag suffix
+        self._connecting_cids: set[int] = set()         # cids currently connecting
 
         # Connect ping bus (emitted from background threads)
         _ping_bus.result.connect(self._set_ping)
@@ -951,6 +1126,135 @@ class App(QMainWindow):
         self._snap_timer.timeout.connect(self._snap_all)
         self._snap_timer.start(_SNAP_MS)
 
+        # Reattach to windows left open from a previous session
+        self._reattach_sessions()
+
+    # ── Session reattach ────────────────────────────────────────────────────
+    def _reattach_sessions(self) -> None:
+        """Restore active-connection state for windows still alive from a
+        previous run of the application."""
+        sessions = database.get_sessions()
+        if not sessions:
+            return
+
+        reattached: dict[int, list[int]] = {}  # cid → [hwnds]
+        stale_ids: list[int] = []
+
+        for s in sessions:
+            cid, hwnd, tag = s["conn_id"], s["hwnd"], s["tag"]
+            if hwnd and conn_launcher.is_window_valid(hwnd):
+                reattached.setdefault(cid, []).append(hwnd)
+                # Restore tracking data
+                hwnd_list = self._snap_hwnds.setdefault(cid, [])
+                if hwnd not in hwnd_list:
+                    hwnd_list.append(hwnd)
+                tag_list = self._snap_tags.setdefault(cid, [])
+                if tag and tag not in tag_list:
+                    tag_list.append(tag)
+            else:
+                stale_ids.append(s["id"])
+
+        # Clean up rows for windows that no longer exist
+        for sid in stale_ids:
+            with database._get_conn() as conn:
+                conn.execute("DELETE FROM active_sessions WHERE id = ?", (sid,))
+                conn.commit()
+
+        if not reattached:
+            return
+
+        log.info("Reattached %d window(s) across %d connection(s)",
+                 sum(len(v) for v in reattached.values()), len(reattached))
+
+        # Update cards to show the reattached windows as active
+        for cid, hwnds in reattached.items():
+            card = self._cards.get(cid)
+            if card:
+                card.set_active_count(len(hwnds))
+
+        # Trigger a screenshot refresh for reattached connections
+        QTimer.singleShot(1000, self._snap_all)
+
+    # ── Close event ────────────────────────────────────────────────────────
+    def closeEvent(self, event) -> None:
+        """Prompt the user if connections are still open."""
+        # Collect all connections that have live windows (either tracked
+        # processes that are still running, or reattached HWNDs).
+        active_cids: dict[int, int] = {}  # cid → window count
+        for cid, procs in self._procs.items():
+            alive = [p for p in procs if p.poll() is None]
+            if alive:
+                active_cids[cid] = len(alive)
+        # Also count reattached-only windows (no Popen, just HWNDs)
+        for cid, hwnds in self._snap_hwnds.items():
+            if cid not in active_cids:
+                valid = [h for h in hwnds if conn_launcher.is_window_valid(h)]
+                if valid:
+                    active_cids[cid] = len(valid)
+
+        if not active_cids:
+            database.clear_sessions()
+            event.accept()
+            return
+
+        # Build a readable list of open connections
+        lines: list[str] = []
+        all_conns = {r["id"]: r for r in database.get_all_connections()}
+        for cid, count in active_cids.items():
+            rec = all_conns.get(cid)
+            name = rec["name"] if rec else f"Connection {cid}"
+            suffix = f"  ({count} windows)" if count > 1 else ""
+            lines.append(f"  • {name}{suffix}")
+
+        dlg = QMessageBox(self)
+        dlg.setWindowTitle("Open Connections")
+        dlg.setIcon(QMessageBox.Question)
+        dlg.setText(
+            "The following connections are still open:\n\n"
+            + "\n".join(lines)
+        )
+        dlg.setInformativeText("What would you like to do?")
+        btn_close = dlg.addButton("Close them", QMessageBox.DestructiveRole)
+        btn_leave = dlg.addButton("Leave running", QMessageBox.AcceptRole)
+        btn_cancel = dlg.addButton("Cancel", QMessageBox.RejectRole)
+        dlg.setDefaultButton(btn_leave)
+        dlg.exec()
+
+        clicked = dlg.clickedButton()
+        if clicked == btn_cancel:
+            event.ignore()
+            return
+
+        if clicked == btn_close:
+            # Kill every tracked process tree
+            for cid, procs in list(self._procs.items()):
+                for proc in procs:
+                    try:
+                        conn_launcher.kill_process_tree(proc.pid)
+                    except Exception:
+                        pass
+            # Also kill reattached-only windows (no Popen)
+            for cid, hwnds in list(self._snap_hwnds.items()):
+                for hwnd in hwnds:
+                    if conn_launcher.is_window_valid(hwnd):
+                        # Find the PID of the window and kill its tree
+                        try:
+                            import ctypes
+                            from ctypes import wintypes
+                            user32 = ctypes.windll.user32
+                            wp = wintypes.DWORD()
+                            user32.GetWindowThreadProcessId(hwnd, ctypes.byref(wp))
+                            if wp.value:
+                                conn_launcher.kill_process_tree(wp.value)
+                        except Exception:
+                            pass
+            database.clear_sessions()
+        else:
+            # "Leave running" — sessions are already persisted
+            pass
+
+        event.accept()
+
     # ── Overview page ─────────────────────────────────────────────────────
     def _build_overview(self) -> None:
         self._overview_page = QWidget()
@@ -960,36 +1264,62 @@ class App(QMainWindow):
 
         # Toolbar
         toolbar = QWidget()
-        toolbar.setStyleSheet("background: transparent;")
+        toolbar.setAttribute(Qt.WA_TranslucentBackground)
         tb = QHBoxLayout(toolbar)
         tb.setContentsMargins(12, 12, 12, 4)
         tb.setSpacing(6)
 
+        # Right button group — built first so we know its exact width
         btn_add = QPushButton("+")
         btn_add.setObjectName("btn_add")
         btn_add.setFixedSize(36, 36)
         btn_add.setToolTip("Add host")
         btn_add.clicked.connect(self._add_host)
-        tb.addWidget(btn_add)
 
         btn_settings = QPushButton("⚙")
         btn_settings.setObjectName("btn_settings")
         btn_settings.setFixedSize(36, 36)
         btn_settings.setToolTip("Settings")
         btn_settings.clicked.connect(self._show_settings)
-        tb.addWidget(btn_settings)
 
-        tb.addStretch()
+        right_group = QWidget()
+        right_group.setAttribute(Qt.WA_TranslucentBackground)
+        rg = QHBoxLayout(right_group)
+        rg.setContentsMargins(0, 0, 0, 0)
+        rg.setSpacing(6)
+        rg.addWidget(btn_add)
+        rg.addWidget(btn_settings)
+        _right_w = 36 + 6 + 36  # must match left_spacer width
 
+        # Left spacer mirrors the right button group width so the centre is symmetric
+        left_spacer = QWidget()
+        left_spacer.setFixedWidth(_right_w)
+        left_spacer.setAttribute(Qt.WA_TranslucentBackground)
+
+        # Centre section — search bar is centred within it via inner stretches
         self._search_edit = QLineEdit()
         self._search_edit.setPlaceholderText("Search…")
-        self._search_edit.setFixedWidth(210)
+        self._search_edit.setMaximumWidth(260)
+        self._search_edit.setMinimumWidth(60)
+        self._search_edit.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self._search_edit.setStyleSheet(
             "background-color: #2a2a2a; border: 1px solid #444;"
             " border-radius: 8px; padding: 5px 10px; color: #e0e0e0;"
         )
         self._search_edit.textChanged.connect(self._refresh_cards)
-        tb.addWidget(self._search_edit)
+
+        center = QWidget()
+        center.setAttribute(Qt.WA_TranslucentBackground)
+        cl = QHBoxLayout(center)
+        cl.setContentsMargins(0, 0, 0, 0)
+        cl.setSpacing(0)
+        cl.addStretch(1)
+        cl.addWidget(self._search_edit, 1)  # stretch=1 so it grows; capped by maxWidth
+        cl.addStretch(1)
+
+        tb.addWidget(left_spacer)
+        tb.addWidget(center, 1)   # takes all remaining space
+        tb.addWidget(right_group)
 
         outer.addWidget(toolbar)
 
@@ -1030,8 +1360,9 @@ class App(QMainWindow):
             card = HostCard(rec, self._on_card_left, self._on_card_right)
             self._cards[rec["id"]] = card
             card.set_online(self._ping_cache.get(rec["id"]))
-            alive = [p for p in self._procs.get(rec["id"], []) if p.poll() is None]
-            card.set_active_count(len(alive))
+            card.set_active_count(self._active_window_count(rec["id"]))
+            if rec["id"] in self._connecting_cids:
+                card.set_connecting(True)
             # Restore persisted screenshot
             png = database.get_screenshot(rec["id"])
             if png:
@@ -1074,37 +1405,61 @@ class App(QMainWindow):
 
     # ── Process tracking ──────────────────────────────────────────────────
     def _check_processes(self) -> None:
+        # Check Popen-tracked processes
         for cid in list(self._procs):
             before = len(self._procs[cid])
             self._procs[cid] = [p for p in self._procs[cid] if p.poll() is None]
             after = len(self._procs[cid])
             if after == 0:
                 del self._procs[cid]
-                self._snap_hwnds.pop(cid, None)
-                self._snap_tags.pop(cid, None)
+                self._clear_connecting(cid)
             if before != after:
                 card = self._cards.get(cid)
                 if card:
-                    card.set_active_count(after)
+                    card.set_active_count(self._active_window_count(cid))
+
+        # Validate all tracked HWNDs (including reattached-only)
+        for cid in list(self._snap_hwnds):
+            remaining = [
+                h for h in self._snap_hwnds[cid]
+                if conn_launcher.is_window_valid(h)
+            ]
+            # Discard stale entries from the Popen-HWND tracker
+            stale = set(self._snap_hwnds[cid]) - set(remaining)
+            self._popen_hwnds -= stale
+            if remaining:
+                self._snap_hwnds[cid] = remaining
+            else:
+                self._snap_hwnds.pop(cid, None)
+                self._snap_tags.pop(cid, None)
+                database.clear_sessions(cid)
+                # Update card if no Popen either
+                if cid not in self._procs:
+                    card = self._cards.get(cid)
+                    if card:
+                        card.set_active_count(0)
 
     # ── Window screenshots ────────────────────────────────────────────────
     def _snap_all(self) -> None:
-        """Capture screenshots for every connection that has live processes."""
-        for cid in list(self._procs):
+        """Capture screenshots for every connection that has live windows."""
+        cids = set(self._procs.keys()) | set(self._snap_hwnds.keys())
+        for cid in cids:
             self._snap_one(cid)
 
     def _snap_one(self, cid: int) -> None:
         """Capture the most recent alive process window for *cid*."""
         procs = self._procs.get(cid, [])
         alive = [p for p in procs if p.poll() is None]
-        if not alive:
-            return
 
         cached_hwnds = self._snap_hwnds.get(cid, [])
         cached_hwnd = cached_hwnds[-1] if cached_hwnds else 0
         hints = self._snap_tags.get(cid, [])
-        # Use the most recently launched process
-        pid = alive[-1].pid
+
+        if not alive and not cached_hwnd and not hints:
+            return
+
+        # Use the most recently launched process PID, or 0 for reattached
+        pid = alive[-1].pid if alive else 0
 
         log.debug("cid=%d: capture (pid=%d, hwnd=%d, hints=%r)", cid, pid, cached_hwnd, hints)
         result = conn_launcher.capture_window(
@@ -1153,9 +1508,11 @@ class App(QMainWindow):
         alive = [p for p in self._procs.get(cid, []) if p.poll() is None]
         if not alive:
             log.debug("cid=%d: process dead, giving up", cid)
+            self._clear_connecting(cid)
             return
         if attempt >= _MAX_ATTEMPTS:
             log.debug("cid=%d: timed out after %ds, snapping anyway", cid, _MAX_ATTEMPTS)
+            self._clear_connecting(cid)
             self._snap_one(cid)
             return
 
@@ -1168,6 +1525,9 @@ class App(QMainWindow):
                 hwnd_list = self._snap_hwnds.setdefault(cid, [])
                 if found_hwnd not in hwnd_list:
                     hwnd_list.append(found_hwnd)
+                self._popen_hwnds.add(found_hwnd)
+                # Persist for reattach across restarts
+                database.save_session(cid, found_hwnd, tag)
                 log.debug("cid=%d: window appeared hwnd=%d (attempt %d)", cid, found_hwnd, attempt)
                 QTimer.singleShot(1000, lambda: self._wait_for_auth(
                     cid, tag, attempt + 1, _phase="disappear"))
@@ -1182,30 +1542,61 @@ class App(QMainWindow):
                 hwnd_list = self._snap_hwnds.setdefault(cid, [])
                 if found_hwnd not in hwnd_list:
                     hwnd_list.append(found_hwnd)
+                self._popen_hwnds.add(found_hwnd)
                 if attempt % 5 == 0:
                     log.debug("cid=%d: tag %r still present (attempt %d)", cid, tag, attempt)
                 QTimer.singleShot(1000, lambda: self._wait_for_auth(
                     cid, tag, attempt + 1, _phase="disappear"))
             else:
                 log.debug("cid=%d: tag %r gone (attempt %d) — auth complete", cid, tag, attempt)
+                self._clear_connecting(cid)
                 QTimer.singleShot(500, lambda c=cid: self._snap_one(c))
 
     # ── Card clicks ───────────────────────────────────────────────────────
+    def _has_active_windows(self, cid: int) -> bool:
+        """Return True if *cid* has any tracked live processes or valid reattached HWNDs."""
+        alive = [p for p in self._procs.get(cid, []) if p.poll() is None]
+        if alive:
+            return True
+        return any(
+            conn_launcher.is_window_valid(h)
+            for h in self._snap_hwnds.get(cid, [])
+        )
+
+    def _active_window_count(self, cid: int) -> int:
+        """Return the number of live windows for *cid* (Popen + reattached HWNDs)."""
+        alive_popen_count = sum(
+            1 for p in self._procs.get(cid, []) if p.poll() is None
+        )
+        # Count valid HWNDs that were NOT discovered for a Popen launch
+        # (i.e. reattached-only windows from a previous session).
+        reattached_count = sum(
+            1 for h in self._snap_hwnds.get(cid, [])
+            if conn_launcher.is_window_valid(h) and h not in self._popen_hwnds
+        )
+        return alive_popen_count + reattached_count
+
     def _on_card_left(self, record) -> None:
         cid = record["id"]
+        if cid in self._connecting_cids:
+            return  # already connecting — ignore click
         alive = [p for p in self._procs.get(cid, []) if p.poll() is None]
         if alive:
             for proc in alive:
                 conn_launcher.bring_process_to_front(proc.pid)
+        elif self._has_active_windows(cid):
+            # Reattached-only — bring windows to front
+            hwnds = self._collect_hwnds(cid)
+            if hwnds:
+                conn_launcher.restore_windows(hwnds)
         else:
             self._connect(record)
 
     def _on_card_right(self, record, pos: QPoint) -> None:
         cid = record["id"]
-        alive = [p for p in self._procs.get(cid, []) if p.poll() is None]
+        n = self._active_window_count(cid)
         menu = QMenu(self)
-        if alive:
-            n = len(alive)
+        if n > 0:
             wlabel = "window" if n == 1 else "windows"
             menu.addAction(f"Locate {wlabel}",
                            lambda: self._locate_windows(record))
@@ -1280,11 +1671,27 @@ class App(QMainWindow):
                 conn_launcher.kill_process_tree(proc.pid)
             except Exception:
                 pass
+        # Also kill reattached-only windows (no Popen)
+        for hwnd in self._snap_hwnds.get(cid, []):
+            if conn_launcher.is_window_valid(hwnd):
+                try:
+                    import ctypes
+                    from ctypes import wintypes
+                    user32 = ctypes.windll.user32
+                    wp = wintypes.DWORD()
+                    user32.GetWindowThreadProcessId(hwnd, ctypes.byref(wp))
+                    if wp.value:
+                        conn_launcher.kill_process_tree(wp.value)
+                except Exception:
+                    pass
         self._procs.pop(cid, None)
         self._snap_hwnds.pop(cid, None)
         self._snap_tags.pop(cid, None)
+        database.clear_sessions(cid)
+        self._connecting_cids.discard(cid)
         card = self._cards.get(cid)
         if card:
+            card.set_connecting(False)
             card.set_active_count(0)
 
     def _connect(self, record) -> None:
@@ -1309,10 +1716,11 @@ class App(QMainWindow):
                 title_tag=tag or None,
             )
             self._procs.setdefault(cid, []).append(proc)
-            alive = len([p for p in self._procs[cid] if p.poll() is None])
+            # Show "Connecting..." animation (active count updates when it resolves)
+            self._connecting_cids.add(cid)
             card = self._cards.get(cid)
             if card:
-                card.set_active_count(alive)
+                card.set_connecting(True)
             # Schedule first screenshot.
             if tag:
                 # SSH: poll until the title changes away from our tag
@@ -1321,8 +1729,21 @@ class App(QMainWindow):
             else:
                 # RDP: just wait a few seconds for the window to appear.
                 QTimer.singleShot(3000, lambda c=cid: self._snap_one(c))
+                QTimer.singleShot(3500, lambda c=cid: self._clear_connecting(c))
         except Exception as exc:
+            self._connecting_cids.discard(cid)
+            card = self._cards.get(cid)
+            if card:
+                card.set_connecting(False)
             QMessageBox.critical(self, "Connection Error", str(exc))
+
+    def _clear_connecting(self, cid: int) -> None:
+        """Remove *cid* from the connecting set and update its card."""
+        self._connecting_cids.discard(cid)
+        card = self._cards.get(cid)
+        if card:
+            card.set_connecting(False)
+            card.set_active_count(self._active_window_count(cid))
 
     def _add_host(self) -> None:
         dlg = ConnectionDialog(self)

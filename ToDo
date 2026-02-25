@@ -1,21 +1,8 @@
-Close open connections:
-If the program is closed while connections are open, it should prompt the user showing open connection windows and asking if they want to close them.
+- Implement a homogenous color scheme for the app.
+- Implement light theme and a toggle in the settings.
 
-Reattach to previous connections:
-When the program is opened, it should check for any open connection windows. This can be done by saving the hwid of connection windows that are open and checking if they are still open when the program starts. If they are, the program should reattach to them and show them in the UI as active connections.
+- Propper attributions for icons used in the app (eg the "add connection" button), ahead of moving repo to public access.
 
-UI Fixes:
-- Move the search bar to the center of the top bar.
-- Move the "Add Connection" and settings buttons to the right side of the top bar.
-- Add colored background to the buttons.
-- Add hover over effects to the buttons and connection cards.
-- - If you hover over a connection card, make a blue overlay with a "Connect" text if no connection is active, or some text describing that you can change to the active connection.
-- While waiting for the connection to be established, show a yellow border on the card, disable the connect button to prevent multiple clicks, and show a "Connecting..." text on top of the card with a fade and animate the dot dot dot after connecting.
-
-Settings:
-- Add a toggle to enable/disable the search bar to declutter the UI if the user doesn't need it.
-- Add a toggle to enable/disable the screenshot functionality.
-- - Add the possibility to configure the time between screenshot captures.
-
-Modernize the right-click context menu:
-- Add icons to the menu items.
+- custom background images for hosts.
+- - maybe possible to pick from a few pre-defined ones, or even upload your own?
+- - Settings: controlling screenshot behaviour if custom backgrounds are enabled (when to show screenshots and when to show the custom background instead -- ie show screenshots for active connections, but show custom background for inactive ones)

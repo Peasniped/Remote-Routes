@@ -3,10 +3,10 @@ __pycache__/
 *.py[cod]
 *.pyo
 
-# SQLite database (user data, not tracked)
-*.db
-
-# Virtual environment
+# Virtual environment and environment variables
 .venv/
-venv/
-env/
+.env
+
+# Instance folder (db lives here, but keep the folder itself)
+instance/*
+!instance/.gitkeep

@@ -5,10 +5,12 @@ import os
 from typing import Optional
 
 
-DB_PATH = os.path.join(os.path.expanduser("~"), ".remote_routes.db")
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DB_PATH = os.path.join(_PROJECT_ROOT, "instance", ".remote_routes.db")
 
 
 def _get_conn() -> sqlite3.Connection:
+    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
@@ -72,6 +74,17 @@ def init_db() -> None:
             CREATE TABLE IF NOT EXISTS settings (
                 key   TEXT PRIMARY KEY,
                 value TEXT NOT NULL DEFAULT ''
+            )
+        """)
+
+        # ── active sessions (survive app restarts) ────────────────────────
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS active_sessions (
+                id      INTEGER PRIMARY KEY AUTOINCREMENT,
+                conn_id INTEGER NOT NULL,
+                hwnd    INTEGER NOT NULL DEFAULT 0,
+                tag     TEXT    NOT NULL DEFAULT '',
+                FOREIGN KEY (conn_id) REFERENCES connections(id) ON DELETE CASCADE
             )
         """)
 
@@ -218,7 +231,11 @@ def get_screenshot(conn_id: int) -> Optional[bytes]:
 
 # ─── Settings ─────────────────────────────────────────────────────────────────
 
-_SETTING_DEFAULTS: dict[str, str] = {}
+_SETTING_DEFAULTS: dict[str, str] = {
+    "show_search_bar":     "1",
+    "screenshot_enabled":  "1",
+    "screenshot_interval": "30",
+}
 
 
 def get_setting(key: str) -> str:
@@ -240,4 +257,41 @@ def set_setting(key: str, value: str) -> None:
             " ON CONFLICT(key) DO UPDATE SET value = excluded.value",
             (key, value),
         )
+        conn.commit()
+
+
+# ─── Active sessions ──────────────────────────────────────────────────────────
+
+def save_session(conn_id: int, hwnd: int, tag: str) -> None:
+    """Record an active window so it can be reattached after restart."""
+    with _get_conn() as conn:
+        conn.execute(
+            "INSERT INTO active_sessions (conn_id, hwnd, tag) VALUES (?, ?, ?)",
+            (conn_id, hwnd, tag),
+        )
+        conn.commit()
+
+
+def get_sessions() -> list[sqlite3.Row]:
+    """Return all persisted active sessions."""
+    with _get_conn() as conn:
+        return conn.execute("SELECT * FROM active_sessions").fetchall()
+
+
+def clear_sessions(conn_id: int | None = None) -> None:
+    """Remove persisted sessions.  If *conn_id* given, only for that connection."""
+    with _get_conn() as conn:
+        if conn_id is not None:
+            conn.execute(
+                "DELETE FROM active_sessions WHERE conn_id = ?", (conn_id,)
+            )
+        else:
+            conn.execute("DELETE FROM active_sessions")
+        conn.commit()
+
+
+def remove_session_by_hwnd(hwnd: int) -> None:
+    """Remove a single session row by HWND."""
+    with _get_conn() as conn:
+        conn.execute("DELETE FROM active_sessions WHERE hwnd = ?", (hwnd,))
         conn.commit()
