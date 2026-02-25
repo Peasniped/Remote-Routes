@@ -1,8 +1,19 @@
+Propper attributions for icons from svgrepo.com used in the app, ahead of moving repo to public access.
+
+custom background images for hosts.
+- maybe possible to pick from a few pre-defined ones, or even upload your own? (maybe able to pull from some API?)
+- Settings: controlling screenshot behaviour if custom backgrounds are enabled (when to show screenshots and when to show the custom background instead -- ie show screenshots for active connections, but show custom background for inactive ones)
+
+Color scheme:
 - Implement a homogenous color scheme for the app.
 - Implement light theme and a toggle in the settings.
+- Completely configurable color scheme for both light/dark theme
+- - Colors are listed next to each other, can be changed with a color picker or by hex/rgb/hsv
 
-- Propper attributions for icons used in the app (eg the "add connection" button), ahead of moving repo to public access.
+Host grouping: Can create/rename/remove host groups and assign hosts to one or more groups.
+- Function can be enabled/disabled in the settings
+- Hosts that are not assigned to a group are in the invisible (no title visible) ungrouped-group.
+- Groups can be collapsed and will show (3 active, 2 online, 5 unavailable) (can be disabled)
 
-- custom background images for hosts.
-- - maybe possible to pick from a few pre-defined ones, or even upload your own?
-- - Settings: controlling screenshot behaviour if custom backgrounds are enabled (when to show screenshots and when to show the custom background instead -- ie show screenshots for active connections, but show custom background for inactive ones)
+Reordering of hosts and groups with simple drag and drop
+- - groups can be dragged over/under the ungrouped-group, and will retain their place.
