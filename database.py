@@ -47,7 +47,7 @@ def get_connection_by_id(conn_id: int) -> Optional[sqlite3.Row]:
 
 def add_connection(
     name: str,
-    conn_type: str,
+    type: str,
     host: str,
     port: int,
     username: str,
@@ -58,7 +58,7 @@ def add_connection(
         cursor = conn.execute(
             "INSERT INTO connections (name, type, host, port, username, password, notes)"
             " VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (name, conn_type, host, port, username, password, notes),
+            (name, type, host, port, username, password, notes),
         )
         conn.commit()
         return cursor.lastrowid
@@ -67,7 +67,7 @@ def add_connection(
 def update_connection(
     conn_id: int,
     name: str,
-    conn_type: str,
+    type: str,
     host: str,
     port: int,
     username: str,
@@ -78,7 +78,7 @@ def update_connection(
         conn.execute(
             "UPDATE connections SET name=?, type=?, host=?, port=?, username=?,"
             " password=?, notes=? WHERE id=?",
-            (name, conn_type, host, port, username, password, notes, conn_id),
+            (name, type, host, port, username, password, notes, conn_id),
         )
         conn.commit()
 
