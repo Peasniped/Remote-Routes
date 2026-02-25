@@ -1,9 +1,12 @@
 """Connection launchers for SSH and RDP."""
 
+import logging
 import shutil
 import subprocess
 import sys
 from typing import Optional
+
+log = logging.getLogger("connections")
 
 
 def _find_terminal() -> list[str]:
@@ -147,6 +150,141 @@ def bring_process_to_front(pid: int) -> bool:
     return False
 
 
+def restore_windows(hwnds: list[int]) -> None:
+    """Bring every HWND in *hwnds* to the foreground (un-minimise first).
+
+    Call this once before shaking so that *all* windows are visible.
+    """
+    if sys.platform != "win32" or not hwnds:
+        return
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        user32 = ctypes.windll.user32
+        user32.ShowWindow.argtypes = [wintypes.HWND, ctypes.c_int]
+        user32.ShowWindow.restype = wintypes.BOOL
+        user32.SetForegroundWindow.argtypes = [wintypes.HWND]
+        user32.SetForegroundWindow.restype = wintypes.BOOL
+
+        SW_RESTORE = 9
+        for hwnd in hwnds:
+            user32.ShowWindow(hwnd, SW_RESTORE)
+        # SetForegroundWindow on the *first* so it doesn't cover the rest
+        user32.SetForegroundWindow(hwnds[0])
+    except Exception:
+        pass
+
+
+def shake_window(hwnd: int, cycles: int = 4) -> None:
+    """Shake *hwnd* with random jittery motion for *cycles* iterations,
+    then restore it to its original position.
+    Runs synchronously — intended for a background thread.
+    """
+    if sys.platform != "win32" or not hwnd:
+        return
+    try:
+        import ctypes
+        from ctypes import wintypes
+        import random
+        import time
+
+        user32 = ctypes.windll.user32
+
+        class RECT(ctypes.Structure):
+            _fields_ = [
+                ("left", ctypes.c_long), ("top", ctypes.c_long),
+                ("right", ctypes.c_long), ("bottom", ctypes.c_long),
+            ]
+
+        user32.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(RECT)]
+        user32.GetWindowRect.restype = wintypes.BOOL
+        user32.MoveWindow.argtypes = [
+            wintypes.HWND, ctypes.c_int, ctypes.c_int,
+            ctypes.c_int, ctypes.c_int, wintypes.BOOL,
+        ]
+        user32.MoveWindow.restype = wintypes.BOOL
+
+        # Save original position
+        r = RECT()
+        user32.GetWindowRect(hwnd, ctypes.byref(r))
+        orig_x, orig_y = r.left, r.top
+        win_w = r.right - r.left
+        win_h = r.bottom - r.top
+
+        amplitude = 12  # max pixels of jitter
+        steps_per_cycle = 8
+        delay = 0.045  # seconds between jitter steps
+
+        for _ in range(cycles * steps_per_cycle):
+            dx = random.randint(-amplitude, amplitude)
+            dy = random.randint(-amplitude, amplitude)
+            user32.MoveWindow(hwnd, orig_x + dx, orig_y + dy, win_w, win_h, True)
+            time.sleep(delay)
+
+        # Restore original position
+        user32.MoveWindow(hwnd, orig_x, orig_y, win_w, win_h, True)
+    except Exception:
+        pass
+
+
+def move_window_to_monitor(hwnd: int, target_rect: tuple[int, int, int, int],
+                           offset: int = 0) -> None:
+    """Move *hwnd* so its top-left is inside *target_rect* (x, y, w, h).
+
+    *offset* is a cascade pixel offset applied to both x and y.
+    """
+    if sys.platform != "win32" or not hwnd:
+        return
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        user32 = ctypes.windll.user32
+
+        class RECT(ctypes.Structure):
+            _fields_ = [
+                ("left", ctypes.c_long), ("top", ctypes.c_long),
+                ("right", ctypes.c_long), ("bottom", ctypes.c_long),
+            ]
+
+        user32.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(RECT)]
+        user32.GetWindowRect.restype = wintypes.BOOL
+        user32.MoveWindow.argtypes = [
+            wintypes.HWND, ctypes.c_int, ctypes.c_int,
+            ctypes.c_int, ctypes.c_int, wintypes.BOOL,
+        ]
+        user32.MoveWindow.restype = wintypes.BOOL
+        user32.ShowWindow.argtypes = [wintypes.HWND, ctypes.c_int]
+        user32.ShowWindow.restype = wintypes.BOOL
+        user32.SetForegroundWindow.argtypes = [wintypes.HWND]
+        user32.SetForegroundWindow.restype = wintypes.BOOL
+
+        SW_RESTORE = 9
+        user32.ShowWindow(hwnd, SW_RESTORE)
+
+        r = RECT()
+        user32.GetWindowRect(hwnd, ctypes.byref(r))
+        win_w = r.right - r.left
+        win_h = r.bottom - r.top
+
+        tx, ty, tw, th = target_rect
+        new_x = tx + 30 + offset
+        new_y = ty + 30 + offset
+        # Clamp so window stays inside the monitor
+        if new_x + win_w > tx + tw:
+            new_x = tx + tw - win_w
+        if new_y + win_h > ty + th:
+            new_y = ty + th - win_h
+        new_x = max(new_x, tx)
+        new_y = max(new_y, ty)
+
+        user32.MoveWindow(hwnd, new_x, new_y, win_w, win_h, True)
+        user32.SetForegroundWindow(hwnd)
+    except Exception:
+        pass
+
+
 def _get_process_tree_pids(pid: int) -> list[int]:
     """Return *pid* plus all descendant PIDs using CreateToolhelp32Snapshot."""
     if sys.platform != "win32":
@@ -204,11 +342,42 @@ def _get_process_tree_pids(pid: int) -> list[int]:
         return [pid]
 
 
+def kill_process_tree(pid: int) -> None:
+    """Terminate *pid* and all its descendant processes."""
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            kernel32 = ctypes.windll.kernel32
+            PROCESS_TERMINATE = 0x0001
+            for p in _get_process_tree_pids(pid):
+                handle = kernel32.OpenProcess(PROCESS_TERMINATE, False, p)
+                if handle:
+                    kernel32.TerminateProcess(handle, 1)
+                    kernel32.CloseHandle(handle)
+        except Exception:
+            pass
+    else:
+        import signal, os
+        for p in _get_process_tree_pids(pid):
+            try:
+                os.kill(p, signal.SIGTERM)
+            except OSError:
+                pass
+
+
 def find_window_by_title(title_hint: str) -> int:
     """Return the HWND of the first visible window whose title contains
     *title_hint*, or 0 if none found."""
+    results = find_windows_by_title(title_hint)
+    return results[0] if results else 0
+
+
+def find_windows_by_title(title_hint: str) -> list[int]:
+    """Return HWNDs of *all* visible windows whose title contains *title_hint*."""
     if sys.platform != "win32" or not title_hint:
-        return 0
+        return []
     try:
         import ctypes
         from ctypes import wintypes
@@ -222,22 +391,20 @@ def find_window_by_title(title_hint: str) -> int:
         WNDENUMPROC = ctypes.WINFUNCTYPE(
             wintypes.BOOL, wintypes.HWND, wintypes.LPARAM
         )
-        result = 0
+        results: list[int] = []
 
         def _cb(h, _lp):
-            nonlocal result
             if user32.IsWindowVisible(h):
                 buf = ctypes.create_unicode_buffer(512)
                 user32.GetWindowTextW(h, buf, 512)
                 if title_hint in buf.value:
-                    result = int(h)
-                    return False  # stop enumeration
-            return True
+                    results.append(int(h))
+            return True  # always continue enumeration
 
         user32.EnumWindows(WNDENUMPROC(_cb), 0)
-        return result
+        return results
     except Exception:
-        return 0
+        return []
 
 
 def capture_window(
@@ -335,7 +502,7 @@ def capture_window(
                 user32.GetWindowRect(hwnd, ctypes.byref(r))
                 if (r.right - r.left) > 0 and (r.bottom - r.top) > 0:
                     target = hwnd
-                    print(f"[snap] reusing cached hwnd={hwnd}")
+                    log.debug("reusing cached hwnd=%d", hwnd)
 
         # ── Strategy 2: Find window by title substring ────────────────
         hints = [h for h in (title_hints or []) if h]
@@ -354,7 +521,7 @@ def capture_window(
             user32.EnumWindows(WNDENUMPROC(_title_cb), 0)
             target = _best_window(hits)
             if target:
-                print(f"[snap] found by title hints {hints!r}: hwnd={target}")
+                log.debug("found by title hints %r: hwnd=%d", hints, target)
 
         # ── Strategy 3: Find window by PID / process tree ─────────────
         if not target and pid:
@@ -375,10 +542,10 @@ def capture_window(
             user32.EnumWindows(WNDENUMPROC(_pid_cb), 0)
             target = _best_window(hits2)
             if target:
-                print(f"[snap] found by PID tree: hwnd={target}")
+                log.debug("found by PID tree: hwnd=%d", target)
 
         if target is None:
-            print(f"[snap] no window found (pid={pid}, hints={hints!r})")
+            log.debug("no window found (pid=%d, hints=%r)", pid, hints)
             return None
 
         # ── Capture the window ────────────────────────────────────────
@@ -387,7 +554,7 @@ def capture_window(
         w = rect.right - rect.left
         h = rect.bottom - rect.top
         if w <= 0 or h <= 0:
-            print(f"[snap] window {target} has zero size ({w}x{h})")
+            log.debug("window %d has zero size (%dx%d)", target, w, h)
             return None
 
         hwnd_dc = user32.GetWindowDC(target)
@@ -426,9 +593,9 @@ def capture_window(
         gdi32.DeleteDC(mem_dc)
         user32.ReleaseDC(target, hwnd_dc)
 
-        print(f"[snap] captured hwnd={target} {w}x{h}")
+        log.debug("captured hwnd=%d %dx%d", target, w, h)
         return (int(target), w, h, bytes(buf))
 
     except Exception as exc:
-        print(f"[snap] exception: {exc}")
+        log.debug("capture exception: %s", exc)
         return None

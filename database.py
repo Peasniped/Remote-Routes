@@ -61,6 +61,20 @@ def init_db() -> None:
                 " REFERENCES users(id) ON DELETE SET NULL"
             )
 
+        # ── migration: add screenshot blob ────────────────────────────────
+        if not _column_exists(conn, "connections", "screenshot"):
+            conn.execute(
+                "ALTER TABLE connections ADD COLUMN screenshot BLOB"
+            )
+
+        # ── settings table (key-value) ────────────────────────────────────
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS settings (
+                key   TEXT PRIMARY KEY,
+                value TEXT NOT NULL DEFAULT ''
+            )
+        """)
+
         conn.commit()
 
 
@@ -179,3 +193,51 @@ def get_effective_credentials(conn_id: int) -> tuple[str, str]:
         if user:
             return (user["username"], user["password"])
     return (rec["username"], rec["password"])
+
+
+def save_screenshot(conn_id: int, png_bytes: bytes) -> None:
+    """Store a PNG screenshot blob for the given connection."""
+    with _get_conn() as conn:
+        conn.execute(
+            "UPDATE connections SET screenshot = ? WHERE id = ?",
+            (sqlite3.Binary(png_bytes), conn_id),
+        )
+        conn.commit()
+
+
+def get_screenshot(conn_id: int) -> Optional[bytes]:
+    """Return the stored PNG screenshot blob, or None."""
+    with _get_conn() as conn:
+        row = conn.execute(
+            "SELECT screenshot FROM connections WHERE id = ?", (conn_id,)
+        ).fetchone()
+        if row and row["screenshot"]:
+            return bytes(row["screenshot"])
+    return None
+
+
+# ─── Settings ─────────────────────────────────────────────────────────────────
+
+_SETTING_DEFAULTS: dict[str, str] = {}
+
+
+def get_setting(key: str) -> str:
+    """Return the value for *key*, falling back to the built-in default."""
+    with _get_conn() as conn:
+        row = conn.execute(
+            "SELECT value FROM settings WHERE key = ?", (key,)
+        ).fetchone()
+        if row:
+            return row["value"]
+    return _SETTING_DEFAULTS.get(key, "")
+
+
+def set_setting(key: str, value: str) -> None:
+    """Insert or update a setting."""
+    with _get_conn() as conn:
+        conn.execute(
+            "INSERT INTO settings (key, value) VALUES (?, ?)"
+            " ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (key, value),
+        )
+        conn.commit()

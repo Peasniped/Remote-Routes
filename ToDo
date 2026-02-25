@@ -1,9 +1,8 @@
-Locate window:
-If you right click a connection host with active connection(s) in the UI, there should be a button to locate the windows. (useful if you have many open connections or multiple monitors). An idea of the location is to flash the window borders or move them to the same monitor as the main app window, cascading them if there are multiple.
-Maybe there should be a setting to configure the locate behavior (flash/move/both) and the flash duration.
-
 Close open connections:
 If the program is closed while connections are open, it should prompt the user showing open connection windows and asking if they want to close them.
+
+Reattach to previous connections:
+When the program is opened, it should check for any open connection windows. This can be done by saving the hwid of connection windows that are open and checking if they are still open when the program starts. If they are, the program should reattach to them and show them in the UI as active connections.
 
 UI Fixes:
 - Move the search bar to the center of the top bar.

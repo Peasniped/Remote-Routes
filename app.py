@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+import logging
 import subprocess
 import sys
 import threading
+import time
 from typing import Optional
 
-from PySide6.QtCore import Qt, QRectF, QTimer, Signal, QObject, QPoint
-from PySide6.QtGui import QColor, QFont, QImage, QPalette, QPainter, QPainterPath, QPixmap
+from PySide6.QtCore import Qt, QRectF, QTimer, Signal, QObject, QPoint, QBuffer, QByteArray, QIODevice
+from PySide6.QtGui import QColor, QFont, QImage, QPalette, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
@@ -25,6 +27,7 @@ from PySide6.QtWidgets import (
     QScrollArea,
     QSizePolicy,
     QStackedWidget,
+    QTabWidget,
     QTextEdit,
     QVBoxLayout,
     QWidget,
@@ -32,6 +35,8 @@ from PySide6.QtWidgets import (
 
 import database
 import connections as conn_launcher
+
+log = logging.getLogger("app")
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 _DEFAULT_PORTS = {"SSH": 22, "RDP": 3389}
@@ -605,8 +610,6 @@ class CardInner(QFrame):
         # 3) Active border
         if self._active:
             painter.setClipping(False)
-            pen = painter.pen()
-            from PySide6.QtGui import QPen
             border_pen = QPen(_BORDER_ACTIVE, _BORDER_WIDTH)
             painter.setPen(border_pen)
             painter.setBrush(Qt.NoBrush)
@@ -784,21 +787,35 @@ class SettingsPage(QWidget):
         header.addStretch()
         layout.addLayout(header)
 
-        # Section header
+        # Tab widget
+        self._tabs = QTabWidget()
+        layout.addWidget(self._tabs, 1)
+
+        # ── General tab (placeholder for future settings) ─────────────
+        general_page = QWidget()
+        gen_layout = QVBoxLayout(general_page)
+        gen_layout.setContentsMargins(12, 12, 12, 12)
+        gen_placeholder = QLabel("No general settings yet.")
+        gen_placeholder.setAlignment(Qt.AlignCenter)
+        gen_placeholder.setStyleSheet("color: #666; background: transparent;")
+        gen_layout.addWidget(gen_placeholder)
+        gen_layout.addStretch()
+        self._tabs.addTab(general_page, "General")
+
+        # ── Users tab ─────────────────────────────────────────────────
+        users_page = QWidget()
+        users_layout = QVBoxLayout(users_page)
+        users_layout.setContentsMargins(12, 12, 12, 12)
+        users_layout.setSpacing(8)
+
         sec_row = QHBoxLayout()
-        sec_lbl = QLabel("Users")
-        sec_lbl.setStyleSheet(
-            "font-size: 16px; font-weight: bold; background: transparent;"
-        )
-        sec_row.addWidget(sec_lbl)
         sec_row.addStretch()
         btn_add_user = QPushButton("+ Add User")
         btn_add_user.setObjectName("btn_add_green")
         btn_add_user.clicked.connect(self._add_user)
         sec_row.addWidget(btn_add_user)
-        layout.addLayout(sec_row)
+        users_layout.addLayout(sec_row)
 
-        # Scrollable user list
         self._scroll = QScrollArea()
         self._scroll.setWidgetResizable(True)
         self._scroll.setStyleSheet("background: transparent; border: none;")
@@ -809,7 +826,9 @@ class SettingsPage(QWidget):
         self._list_layout.setSpacing(6)
         self._list_layout.addStretch()
         self._scroll.setWidget(self._list_container)
-        layout.addWidget(self._scroll, 1)
+        users_layout.addWidget(self._scroll, 1)
+
+        self._tabs.addTab(users_page, "Users")
 
         self.refresh()
 
@@ -903,8 +922,9 @@ class App(QMainWindow):
         self._procs: dict[int, list[subprocess.Popen]] = {}
         self._ping_cache: dict[int, Optional[bool]] = {}
         self._cards: dict[int, HostCard] = {}
-        self._snap_hwnds: dict[int, int] = {}    # cid → cached HWND
-        self._snap_tags: dict[int, list[str]] = {} # cid → title hints
+        self._snap_hwnds: dict[int, list[int]] = {}   # cid → cached HWNDs
+        self._snap_tags: dict[int, list[str]] = {}     # cid → title hints (accumulated)
+        self._launch_counter: int = 0                   # unique tag suffix
 
         # Connect ping bus (emitted from background threads)
         _ping_bus.result.connect(self._set_ping)
@@ -1012,6 +1032,13 @@ class App(QMainWindow):
             card.set_online(self._ping_cache.get(rec["id"]))
             alive = [p for p in self._procs.get(rec["id"], []) if p.poll() is None]
             card.set_active_count(len(alive))
+            # Restore persisted screenshot
+            png = database.get_screenshot(rec["id"])
+            if png:
+                pix = QPixmap()
+                pix.loadFromData(png, "PNG")
+                if not pix.isNull():
+                    card.set_background(pix)
             new_cards.append(card)
 
         self._card_grid.set_cards(new_cards)
@@ -1053,7 +1080,8 @@ class App(QMainWindow):
             after = len(self._procs[cid])
             if after == 0:
                 del self._procs[cid]
-                self._snap_hwnds.pop(cid, None)  # force re-discover next time
+                self._snap_hwnds.pop(cid, None)
+                self._snap_tags.pop(cid, None)
             if before != after:
                 card = self._cards.get(cid)
                 if card:
@@ -1072,24 +1100,27 @@ class App(QMainWindow):
         if not alive:
             return
 
-        cached_hwnd = self._snap_hwnds.get(cid, 0)
+        cached_hwnds = self._snap_hwnds.get(cid, [])
+        cached_hwnd = cached_hwnds[-1] if cached_hwnds else 0
         hints = self._snap_tags.get(cid, [])
         # Use the most recently launched process
         pid = alive[-1].pid
 
-        print(f"[snap] cid={cid}: capture (pid={pid}, hwnd={cached_hwnd}, hints={hints!r})")
+        log.debug("cid=%d: capture (pid=%d, hwnd=%d, hints=%r)", cid, pid, cached_hwnd, hints)
         result = conn_launcher.capture_window(
             pid=pid, hwnd=cached_hwnd, title_hints=hints
         )
         if result is None:
-            print(f"[snap] cid={cid}: capture returned None")
+            log.debug("cid=%d: capture returned None", cid)
             return
 
         found_hwnd, w, h, buf = result
         if found_hwnd:
-            self._snap_hwnds[cid] = found_hwnd
+            hwnd_list = self._snap_hwnds.setdefault(cid, [])
+            if found_hwnd not in hwnd_list:
+                hwnd_list.append(found_hwnd)
 
-        print(f"[snap] cid={cid}: got {w}x{h} image")
+        log.debug("cid=%d: got %dx%d image", cid, w, h)
         img = QImage(buf, w, h, w * 4, QImage.Format_ARGB32)
         if img.isNull():
             return
@@ -1099,6 +1130,13 @@ class App(QMainWindow):
         card = self._cards.get(cid)
         if card:
             card.set_background(pix)
+        # Persist as PNG in the database
+        ba = QByteArray()
+        qbuf = QBuffer(ba)
+        qbuf.open(QIODevice.WriteOnly)
+        pix.save(qbuf, "PNG")
+        qbuf.close()
+        database.save_screenshot(cid, bytes(ba))
 
     def _wait_for_auth(self, cid: int, tag: str, attempt: int = 0,
                        _phase: str = "appear") -> None:
@@ -1114,10 +1152,10 @@ class App(QMainWindow):
         _MAX_ATTEMPTS = 60
         alive = [p for p in self._procs.get(cid, []) if p.poll() is None]
         if not alive:
-            print(f"[auth] cid={cid}: process dead, giving up")
+            log.debug("cid=%d: process dead, giving up", cid)
             return
         if attempt >= _MAX_ATTEMPTS:
-            print(f"[auth] cid={cid}: timed out after {_MAX_ATTEMPTS}s, snapping anyway")
+            log.debug("cid=%d: timed out after %ds, snapping anyway", cid, _MAX_ATTEMPTS)
             self._snap_one(cid)
             return
 
@@ -1127,25 +1165,29 @@ class App(QMainWindow):
             if found_hwnd:
                 # Window appeared — cache its HWND so capture_window can
                 # reuse it even after the title changes.
-                self._snap_hwnds[cid] = found_hwnd
-                print(f"[auth] cid={cid}: window appeared hwnd={found_hwnd} (attempt {attempt})")
+                hwnd_list = self._snap_hwnds.setdefault(cid, [])
+                if found_hwnd not in hwnd_list:
+                    hwnd_list.append(found_hwnd)
+                log.debug("cid=%d: window appeared hwnd=%d (attempt %d)", cid, found_hwnd, attempt)
                 QTimer.singleShot(1000, lambda: self._wait_for_auth(
                     cid, tag, attempt + 1, _phase="disappear"))
             else:
                 if attempt % 5 == 0:
-                    print(f"[auth] cid={cid}: waiting for window (attempt {attempt})")
+                    log.debug("cid=%d: waiting for window (attempt %d)", cid, attempt)
                 QTimer.singleShot(500, lambda: self._wait_for_auth(
                     cid, tag, attempt + 1, _phase="appear"))
         else:  # disappear
             if found_hwnd:
                 # Update cached HWND in case it changed.
-                self._snap_hwnds[cid] = found_hwnd
+                hwnd_list = self._snap_hwnds.setdefault(cid, [])
+                if found_hwnd not in hwnd_list:
+                    hwnd_list.append(found_hwnd)
                 if attempt % 5 == 0:
-                    print(f"[auth] cid={cid}: tag {tag!r} still present (attempt {attempt})")
+                    log.debug("cid=%d: tag %r still present (attempt %d)", cid, tag, attempt)
                 QTimer.singleShot(1000, lambda: self._wait_for_auth(
                     cid, tag, attempt + 1, _phase="disappear"))
             else:
-                print(f"[auth] cid={cid}: tag {tag!r} gone (attempt {attempt}) — auth complete")
+                log.debug("cid=%d: tag %r gone (attempt %d) — auth complete", cid, tag, attempt)
                 QTimer.singleShot(500, lambda c=cid: self._snap_one(c))
 
     # ── Card clicks ───────────────────────────────────────────────────────
@@ -1163,9 +1205,17 @@ class App(QMainWindow):
         alive = [p for p in self._procs.get(cid, []) if p.poll() is None]
         menu = QMenu(self)
         if alive:
+            n = len(alive)
+            wlabel = "window" if n == 1 else "windows"
+            menu.addAction(f"Locate {wlabel}",
+                           lambda: self._locate_windows(record))
+            menu.addAction("Move to this monitor",
+                           lambda: self._move_windows(record))
+            menu.addSeparator()
             menu.addAction("Start additional connection",
                            lambda: self._connect(record))
-            menu.addAction("Close all connections",
+            clabel = "Close connection" if n == 1 else "Close all connections"
+            menu.addAction(clabel,
                            lambda: self._close_all(record))
         else:
             menu.addAction("Connect", lambda: self._connect(record))
@@ -1175,11 +1225,59 @@ class App(QMainWindow):
         menu.exec(pos)
 
     # ── Actions ───────────────────────────────────────────────────────────
+    def _collect_hwnds(self, cid: int) -> list[int]:
+        hwnds: list[int] = []
+        # Start with all cached HWNDs (accumulated over launches)
+        for h in self._snap_hwnds.get(cid, []):
+            if h not in hwnds:
+                hwnds.append(h)
+        # Also search by every title hint (tag + host, across launches)
+        for hint in self._snap_tags.get(cid, []):
+            for h in conn_launcher.find_windows_by_title(hint):
+                if h not in hwnds:
+                    hwnds.append(h)
+        return hwnds
+
+    def _locate_windows(self, record) -> None:
+        hwnds = self._collect_hwnds(record["id"])
+        if not hwnds:
+            return
+        cycles = 4
+
+        def _do_locate():
+            conn_launcher.restore_windows(hwnds)
+            time.sleep(0.05)
+            threads = []
+            for hwnd in hwnds:
+                t = threading.Thread(
+                    target=conn_launcher.shake_window,
+                    args=(hwnd, cycles),
+                    daemon=True,
+                )
+                t.start()
+                threads.append(t)
+            for t in threads:
+                t.join()
+
+        threading.Thread(target=_do_locate, daemon=True).start()
+
+    def _move_windows(self, record) -> None:
+        hwnds = self._collect_hwnds(record["id"])
+        if not hwnds:
+            return
+        screen = self.screen()
+        geom = screen.geometry() if screen else None
+        if not geom:
+            return
+        target_rect = (geom.x(), geom.y(), geom.width(), geom.height())
+        for i, hwnd in enumerate(hwnds):
+            conn_launcher.move_window_to_monitor(hwnd, target_rect, offset=i * 40)
+
     def _close_all(self, record) -> None:
         cid = record["id"]
         for proc in self._procs.get(cid, []):
             try:
-                proc.terminate()
+                conn_launcher.kill_process_tree(proc.pid)
             except Exception:
                 pass
         self._procs.pop(cid, None)
@@ -1188,7 +1286,6 @@ class App(QMainWindow):
         card = self._cards.get(cid)
         if card:
             card.set_active_count(0)
-            # Keep the last screenshot as background
 
     def _connect(self, record) -> None:
         cid = record["id"]
@@ -1196,11 +1293,16 @@ class App(QMainWindow):
         # Build title hints so we can find the terminal window later.
         # The tag is set at launch; the host survives after SSH auth
         # changes the title to "user@host: ~".
-        tag = f"Remote-Routes-{cid}" if record["type"] == "SSH" else ""
+        self._launch_counter += 1
+        tag = f"Remote-Routes-{cid}-{self._launch_counter}" if record["type"] == "SSH" else ""
         host = record["host"]
-        hints = [h for h in (tag, host) if h]
-        if hints:
-            self._snap_tags[cid] = hints
+        # Accumulate title hints so older windows can still be found.
+        existing = self._snap_tags.get(cid, [])
+        for h in (tag, host):
+            if h and h not in existing:
+                existing.append(h)
+        if existing:
+            self._snap_tags[cid] = existing
         try:
             proc = conn_launcher.launch(
                 record["type"], record["host"], record["port"], username,
