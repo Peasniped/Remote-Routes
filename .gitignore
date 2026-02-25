@@ -1,0 +1,12 @@
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+
+# SQLite database (user data, not tracked)
+*.db
+
+# Virtual environment
+.venv/
+venv/
+env/
