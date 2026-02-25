@@ -1,6 +1,10 @@
 # Remote-Routes
 A very lightweight and simple Python-based program to store remote connection hosts and settings.
 
+:::info
+Generative AI has been used in this project.
+:::
+
 ## Features
 - Store SSH and RDP connection profiles (name, host, port, username, password, notes)
 - Launch SSH sessions in the default terminal emulator
