@@ -1,15 +1,32 @@
 !! Propper attributions for icons from svgrepo.com used in the app, ahead of moving repo to public access.
 
-Add Web Hosts (shortcuts to services/admin pages etc.)
-- primary/secondary host so it can try dns first, then fallback to ip if it does not work
-- choose between http/https and port for each
-- no support for credentials, as I use 1Password
+Remote Hosts:
+- Add functionality when creating a host to write the hostname and/or the IP, and select which to prefer, if there are two. (It will use this as failover, eg if DNS is down, it will failover to use the Host IP)
 
-Add badge to remote host showing protocol SSH/RDP/WEB
+Add Web Hosts (shortcuts to services/admin pages etc.)
+- choose between http/https and port for each remote host
+- no support for credentials, this is too hard, and the user should really be using a propper pwmanager in their browser.
+
+Add badge to hostcard showing protocol SSH/RDP/WEB
 
 Add Error handling
 - Ex ssh: connect to host 10.50.26.58 port 22: Connection refused
 - Ex incorrect password
+
+UI/UX improvements
+- Make the search bar more pretty? Gradient tailwind CSS like?
+- Center the search bar text
+- Allow search for usernames
+- Change the "Search..." text to something more descriptive, telling to search for name, host, protocol or username
+- When no hosts are configured, make a big background/button that says to "click here or on the + to add your first remote host"
+- Enable adding a new user, when adding a remote host.
+- Add ability to copy displayname/hostname/ip when right clicking a remote host
+- Add hover-over text to the ping-dot (Online/Unreachabe)
+
+Add Remote Routes branding/logo to the top/left
+Add a logo/icon to the taskbar and window header
+
+Add a version/versiondate either to the bottom/left or to the settings page
 
 custom background images for hosts.
 - maybe possible to pick from a few pre-defined ones, or even upload your own? (maybe able to pull from some API?)
@@ -21,7 +38,7 @@ Color scheme:
 - Completely configurable color scheme for both light/dark theme
 - - Colors are listed next to each other, can be changed with a color picker or by hex/rgb/hsv
 
-Host grouping: Can create/rename/remove host groups and assign hosts to one or more groups.
+Host grouping: Can create/rename/remove host groups and assign hosts one group.
 - Function can be enabled/disabled in the settings
 - Hosts that are not assigned to a group are in the invisible (no title visible) ungrouped-group.
 - Groups can be collapsed and will show (3 active, 2 online, 5 unavailable) (can be disabled)
@@ -30,3 +47,7 @@ Reordering of hosts and groups with simple drag and drop
 - - groups can be dragged over/under the ungrouped-group, and will retain their place.
 
 How are passwords stored? -- are they safe?
+
+## Maybe later
+- Add host to multiple host groups -- does it make sense?
+- Some way of combining multiple protocols for the same remote host, ex, if you want to SSH and RDP into the same host, but not have a bunch of hostcards cluttering up the list. 
