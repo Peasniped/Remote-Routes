@@ -232,9 +232,10 @@ def get_screenshot(conn_id: int) -> Optional[bytes]:
 # ─── Settings ─────────────────────────────────────────────────────────────────
 
 _SETTING_DEFAULTS: dict[str, str] = {
-    "show_search_bar":     "1",
-    "screenshot_enabled":  "1",
-    "screenshot_interval": "30",
+    "show_search_bar":      "1",
+    "screenshot_enabled":   "1",
+    "screenshot_interval":  "30",
+    "show_protocol_badge":  "1",
 }
 
 

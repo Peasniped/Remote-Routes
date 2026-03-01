@@ -13,7 +13,7 @@ from PySide6.QtGui import QFont
 from app import App, APP_QSS, _dark_palette
 
 LOGLEVEL = logging.INFO
-LOGLEVEL = logging.DEBUG
+LOGLEVEL = logging.DEBUG # DEBUG for development, INFO for production
 
 logging.basicConfig(
     level=LOGLEVEL,

@@ -11,7 +11,7 @@ import time
 from typing import Optional
 
 from PySide6.QtCore import Qt, QRectF, QSize, QTimer, Signal, QObject, QPoint, QBuffer, QByteArray, QIODevice
-from PySide6.QtGui import QAction, QBitmap, QColor, QFont, QIcon, QImage, QPalette, QPainter, QPainterPath, QPen, QPixmap, QRegion
+from PySide6.QtGui import QAction, QBitmap, QColor, QFont, QFontMetrics, QIcon, QImage, QPalette, QPainter, QPainterPath, QPen, QPixmap, QRegion
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import (
     QApplication,
@@ -170,6 +170,70 @@ class ActiveBadge(QWidget):
         painter.setFont(f)
         painter.setPen(QColor("white"))
         painter.drawText(self.rect(), Qt.AlignCenter, self._text)
+        painter.end()
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  Protocol badge (small rounded square in bottom left)
+# ═══════════════════════════════════════════════════════════════════════════════
+class ProtocolBadge(QWidget):
+    """Small rounded square badge displaying protocol (ex. SSH/RDP/WEB) in bottom left corner of host card."""
+
+    BADGE_MARGIN = 10
+    BADGE_PADDING = 6
+    CORNER_RADIUS = 7
+
+    def __init__(self, parent: QWidget | None = None):
+        super().__init__(parent)
+        
+        
+        self.setAttribute(Qt.WA_TranslucentBackground)
+        self._protocol = ""
+        self.hide()
+
+    def set_protocol(self, protocol: str) -> None:
+        """Set the protocol text (e.g., 'SSH', 'RDP', 'WEB')."""
+        self._protocol = protocol.upper()
+        # Calculate size based on text
+        fm = self.fontMetrics()
+        f = self.font()
+        f.setBold(True)
+        f.setPointSize(7)
+        fm = QFontMetrics(f)
+        text_width = fm.horizontalAdvance(self._protocol)
+        width = text_width + self.BADGE_PADDING * 2
+        height = fm.height() + self.BADGE_PADDING
+        self.setFixedSize(width, height)
+        self.show()
+        self.update()
+
+    def paintEvent(self, event) -> None:
+        if not self._protocol:
+            return
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        
+        # Determine color based on protocol
+        color_map = {
+            "SSH": QColor("#3b82f6"),   # Blue
+            "RDP": QColor("#f97316"),   # Orange
+            "WEB": QColor("#8b5cf6"),   # Purple
+        }
+        badge_color = color_map.get(self._protocol, QColor("#6b7280"))
+        
+        # Draw rounded square (filled, no border)
+        rect = QRectF(0, 0, self.width(), self.height())
+        painter.setBrush(badge_color)
+        painter.setPen(Qt.NoPen)
+        painter.drawRoundedRect(rect, self.CORNER_RADIUS, self.CORNER_RADIUS)
+        
+        # Draw text
+        f = painter.font()
+        f.setBold(True)
+        f.setPointSize(7)
+        painter.setFont(f)
+        painter.setPen(QColor("white"))
+        painter.drawText(rect, Qt.AlignCenter, self._protocol)
         painter.end()
 
 
@@ -872,6 +936,18 @@ class HostCard(QWidget):
         # ── trapezoid badge (child of self, floats centred at top of _inner) ─
         self._badge = ActiveBadge(self)
 
+        # ── protocol badge (child of self, positioned bottom-left) ────────
+        self._protocol_badge = ProtocolBadge(self)
+        protocol = record["type"]
+        self._protocol_badge.set_protocol(protocol)
+        # Position in bottom-left corner with 8px margin
+        badge_h = self._protocol_badge.height()
+        margin = self._protocol_badge.BADGE_MARGIN
+        self._protocol_badge.move(margin, CARD_H - badge_h - margin)
+        # Check setting to show/hide
+        show_badge = database.get_setting("show_protocol_badge") != "0"
+        self._protocol_badge.setVisible(show_badge)
+
         # ── overlay for hover / connecting (sits above everything) ────────
         self._overlay = CardOverlay(self)
         self._overlay.setGeometry(0, 0, CARD_W, CARD_H)
@@ -978,6 +1054,11 @@ class HostCard(QWidget):
         self._connecting_text = f"Connecting{dots}"
         self._overlay.set_connecting_text(self._connecting_text)
 
+    def update_protocol_badge_visibility(self) -> None:
+        """Update protocol badge visibility based on settings."""
+        show_badge = database.get_setting("show_protocol_badge") != "0"
+        self._protocol_badge.setVisible(show_badge)
+
     @property
     def record(self):
         return self._record
@@ -1060,6 +1141,13 @@ class SettingsPage(QWidget):
             "show_search_bar",
         )
         self._search_bar_toggle.toggled.connect(self._on_search_bar_changed)
+
+        self._protocol_badge_toggle = self._make_toggle_row(
+            gen_layout, "Protocol Badge",
+            "Show protocol (SSH/RDP/WEB) badge on host cards",
+            "show_protocol_badge",
+        )
+        self._protocol_badge_toggle.toggled.connect(self._on_protocol_badge_changed)
 
         snap_on = database.get_setting("screenshot_enabled") != "0"
 
@@ -1274,6 +1362,11 @@ class SettingsPage(QWidget):
     def _on_search_bar_changed(self, checked: bool) -> None:
         database.set_setting("show_search_bar", "1" if checked else "0")
         self._search_bar_toggle.setText("ON" if checked else "OFF")
+        self._on_settings_changed()
+
+    def _on_protocol_badge_changed(self, checked: bool) -> None:
+        database.set_setting("show_protocol_badge", "1" if checked else "0")
+        self._protocol_badge_toggle.setText("ON" if checked else "OFF")
         self._on_settings_changed()
 
     def _on_screenshot_changed(self, checked: bool) -> None:
