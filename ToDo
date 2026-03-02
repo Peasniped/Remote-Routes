@@ -6,10 +6,14 @@ Remote Hosts:
 Add Web Hosts (shortcuts to services/admin pages etc.)
 - choose between http/https and port for each remote host
 - no support for credentials, this is too hard, and the user should really be using a propper pwmanager in their browser.
+- Research possibility to track open tabs for the connection in the same way terminal windows are tracked, and show a badge with the number of open tabs for that host.
 
-Add badge to hostcard showing protocol SSH/RDP/WEB
+Ping-dot
+- Rename to StatusDot
+- Add hover-over text to the status-dot (Online/Unreachable)
+- Add a status for "warning" showing if the host is online but has a slow ping response (maybe >100ms?), or if one of the connection methods (dns/ip) is unreachable but the other is online.
 
-Add Error handling
+Add Error handling and show error message popup
 - Ex ssh: connect to host 10.50.26.58 port 22: Connection refused
 - Ex incorrect password
 
@@ -19,9 +23,9 @@ UI/UX improvements
 - Allow search for usernames
 - Change the "Search..." text to something more descriptive, telling to search for name, host, protocol or username
 - When no hosts are configured, make a big background/button that says to "click here or on the + to add your first remote host"
+- Enable a search when filling the username, if there is already a saved user with the same username. Then ask if the user wants to link to that saved user
 - Enable adding a new user, when adding a remote host.
 - Add ability to copy displayname/hostname/ip when right clicking a remote host
-- Add hover-over text to the ping-dot (Online/Unreachabe)
 
 Add Remote Routes branding/logo to the top/left
 Add a logo/icon to the taskbar and window header
