@@ -1,13 +1,11 @@
 !! Propper attributions for icons from svgrepo.com used in the app, ahead of moving repo to public access.
 
 Remote Hosts:
-- Add functionality when creating a host to write the hostname and/or the IP, and select which to prefer, if there are two. (It will use this as failover, eg if DNS is down, it will failover to use the Host IP)
+- Add functionality when creating a host to write the hostname and/or the IP, and select which to prefer (only if both are filled). (It will use this as failover, eg if DNS is down, it will failover to use the Host IP)
 
 Add Web Hosts (shortcuts to services/admin pages etc.)
 - choose between http/https and port for each remote host
 - no support for credentials, this is too hard, and the user should really be using a propper pwmanager in their browser.
-
-Add badge to hostcard showing protocol SSH/RDP/WEB
 
 Add Error handling
 - Ex ssh: connect to host 10.50.26.58 port 22: Connection refused
@@ -27,6 +25,7 @@ Add Remote Routes branding/logo to the top/left
 Add a logo/icon to the taskbar and window header
 
 Add a version/versiondate either to the bottom/left or to the settings page
+- Also to the db. -- in the future, add functionality to migrate database to new version.
 
 custom background images for hosts.
 - maybe possible to pick from a few pre-defined ones, or even upload your own? (maybe able to pull from some API?)
@@ -48,6 +47,11 @@ Reordering of hosts and groups with simple drag and drop
 
 How are passwords stored? -- are they safe?
 
+Code restructure
+- Split up the app file as it is 2000+ lines.
+- - ui module/folder where each class is its own file?
+
 ## Maybe later
 - Add host to multiple host groups -- does it make sense?
 - Some way of combining multiple protocols for the same remote host, ex, if you want to SSH and RDP into the same host, but not have a bunch of hostcards cluttering up the list. 
+
