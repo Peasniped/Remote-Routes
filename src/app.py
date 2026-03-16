@@ -1390,6 +1390,7 @@ class App(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Remote Routes")
+        self.setWindowIcon(QIcon(os.path.join(_PROJECT_ROOT, "static", "logo.ico")))
         self.resize(820, 540)
         self.setMinimumSize(CARD_W + 48, 420)
 
