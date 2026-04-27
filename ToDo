@@ -26,9 +26,12 @@ UI/UX improvements
 - Enable a search when filling the username, if there is already a saved user with the same username. Then ask if the user wants to link to that saved user
 - Enable adding a new user, when adding a remote host.
 - Add ability to copy displayname/hostname/ip when right clicking a remote host
+- Change minimum possible heght of the window to be around 200 px or (search bar height + 2x search bar padding + hostcard height + padding)
+- Add Copy to right click menu allowing the user to easily copy IP/Hostname/Username/password(if configured, if blank, the copy is greyed out and 'Password (not set)' is displayed)
+- Remember and persist window size through sessions.
+- Make the settings page prettier and more modern.
 
 Add Remote Routes branding/logo to the top/left
-Add a logo/icon to the taskbar and window header
 
 Add a version/versiondate either to the bottom/left or to the settings page
 - Also to the db. -- in the future, add functionality to migrate database to new version.
@@ -49,7 +52,7 @@ Host grouping: Can create/rename/remove host groups and assign hosts one group.
 - Groups can be collapsed and will show (3 active, 2 online, 5 unavailable) (can be disabled)
 
 Reordering of hosts and groups with simple drag and drop
-- - groups can be dragged over/under the ungrouped-group, and will retain their place.
+- groups can be dragged over/under the ungrouped-group, and will retain their place.
 
 How are passwords stored? -- are they safe?
 
