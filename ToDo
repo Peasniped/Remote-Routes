@@ -10,7 +10,8 @@ Ping-dot
 - In host creation, add a port checker that checks if the port is open on the remote host.
 - Add an orange dot if the failover is used (ex if hostname is primary and unreachable but IP is ok, or if the port is closed but the IP/host is reachable)
 - Add option to disable ping feature - also disables ping in host creation/edit
-- Add support for paths in IP/domains for web hosts. 
+- Add support for paths in IP/domains for web hosts.
+- - maybe there should be a two-part ping, where it pings the raw host and then uses some other way to scan if the website path returns a valid response
 
 
 Add Error handling and show error message popup
