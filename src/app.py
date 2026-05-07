@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
     QDialog,
+    QFileDialog,
     QFrame,
     QGraphicsBlurEffect,
     QGridLayout,
@@ -72,7 +73,8 @@ def _load_icon(name: str, color: str = "#e0e0e0", size: int = 16) -> QIcon:
         return QIcon()
 
 
-_DEFAULT_PORTS = {"SSH": 22, "RDP": 3389}
+_DEFAULT_PORTS = {"SSH": 22, "RDP": 3389, "WEB": 443}
+_SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
 _PING_MS = 30_000
 _PROC_MS = 3_000
 _SNAP_MS = 30_000   # screenshot refresh interval
@@ -363,6 +365,12 @@ QPushButton#btn_neutral {
 }
 QPushButton#btn_neutral:hover { background-color: #4a4a4a; }
 
+QPushButton#btn_never {
+    background-color: #3a2020; color: #cc8888;
+    border: none; border-radius: 5px; padding: 3px 8px;
+}
+QPushButton#btn_never:hover { background-color: #4a2828; color: #e0a0a0; }
+
 /* ─ type toggle (SSH / RDP) ─ */
 QPushButton#type_btn {
     background-color: #3a3a3a; color: #aaa;
@@ -415,6 +423,10 @@ QFrame#user_row {
 #  Connection Dialog
 # ═══════════════════════════════════════════════════════════════════════════════
 class ConnectionDialog(QDialog):
+    _dns_resolved = Signal(str)       # emitted from DNS worker thread
+    _ip_ping_result = Signal(bool)    # emitted from IP ping thread
+    _host_ping_result = Signal(bool)  # emitted from host ping thread
+
     def __init__(self, parent: QWidget | None = None, record=None):
         super().__init__(parent)
         self.setWindowTitle("Edit Host" if record else "Add Host")
@@ -422,6 +434,17 @@ class ConnectionDialog(QDialog):
         self.setModal(True)
         self._result = None
         self._users = database.get_all_users()
+        self._can_add_hostname = True
+        self._can_add_ip = True
+        self._first_added = ""       # "hostname" | "ip" | ""
+        self._dns_pending_host = ""
+        self._dns_anim_frame = 0
+        self._dns_row_shown = False
+        self._lookup_direct = False
+        self._ip_last_pinged = ""
+        self._host_last_pinged = ""
+        self._ip_ping_anim_frame = 0
+        self._host_ping_anim_frame = 0
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(20, 20, 20, 16)
@@ -429,6 +452,8 @@ class ConnectionDialog(QDialog):
 
         def _row(label: str, widget: QWidget) -> QHBoxLayout:
             row = QHBoxLayout()
+            row.setContentsMargins(0, 0, 0, 0)
+            row.setSpacing(4)
             lbl = QLabel(label)
             lbl.setFixedWidth(80)
             lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
@@ -436,12 +461,10 @@ class ConnectionDialog(QDialog):
             row.addWidget(widget)
             return row
 
-        # Name
-        self._name = QLineEdit()
-        layout.addLayout(_row("Name:", self._name))
-
-        # Type
+        # (Type row added to layout below host section)
         type_row = QHBoxLayout()
+        type_row.setContentsMargins(0, 0, 0, 0)
+        type_row.setSpacing(4)
         lbl_type = QLabel("Type:")
         lbl_type.setFixedWidth(80)
         lbl_type.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
@@ -454,31 +477,272 @@ class ConnectionDialog(QDialog):
         self._btn_rdp.setObjectName("type_btn")
         self._btn_rdp.setCheckable(True)
         self._btn_rdp.setFixedWidth(80)
+        self._btn_web = QPushButton("WEB")
+        self._btn_web.setObjectName("type_btn")
+        self._btn_web.setCheckable(True)
+        self._btn_web.setFixedWidth(80)
         # Exclusive toggle
         self._btn_ssh.clicked.connect(lambda: self._set_type("SSH"))
         self._btn_rdp.clicked.connect(lambda: self._set_type("RDP"))
+        self._btn_web.clicked.connect(lambda: self._set_type("WEB"))
         type_row.addWidget(lbl_type)
         type_row.addWidget(self._btn_ssh)
         type_row.addWidget(self._btn_rdp)
+        type_row.addWidget(self._btn_web)
         type_row.addStretch()
-        layout.addLayout(type_row)
 
-        # Host & Port (same row)
+        # ── Dynamic host section ──────────────────────────────────────────
         self._host = QLineEdit()
+        self._host_ip = QLineEdit()
+
+        # "Add" buttons row
+        self._add_btns_widget = QWidget()
+        self._add_btns_widget.setAttribute(Qt.WA_TranslucentBackground)
+        ab_layout = QHBoxLayout(self._add_btns_widget)
+        ab_layout.setContentsMargins(84, 0, 0, 0)
+        ab_layout.setSpacing(6)
+        self._add_hostname_btn = QPushButton("Add Hostname")
+        self._add_hostname_btn.setObjectName("btn_add_green")
+        self._add_hostname_btn.setFixedHeight(26)
+        self._add_hostname_btn.clicked.connect(lambda: self._add_host_field("hostname"))
+        ab_layout.addWidget(self._add_hostname_btn)
+        self._add_ip_btn = QPushButton("Add IP Address")
+        self._add_ip_btn.setObjectName("btn_add_green")
+        self._add_ip_btn.setFixedHeight(26)
+        self._add_ip_btn.clicked.connect(lambda: self._add_host_field("ip"))
+        ab_layout.addWidget(self._add_ip_btn)
+        ab_layout.addStretch()
+        layout.addWidget(self._add_btns_widget)
+
+        # Standalone trailing add-button widgets (placed in _hsl when one field already present)
+        self._add_hn_trailing_widget = QWidget()
+        self._add_hn_trailing_widget.setAttribute(Qt.WA_TranslucentBackground)
+        ahn_t_l = QHBoxLayout(self._add_hn_trailing_widget)
+        ahn_t_l.setContentsMargins(84, 0, 0, 0)
+        ahn_t_l.setSpacing(0)
+        self._btn_add_hn_trailing = QPushButton("Add Hostname")
+        self._btn_add_hn_trailing.setObjectName("btn_add_green")
+        self._btn_add_hn_trailing.setFixedHeight(26)
+        self._btn_add_hn_trailing.clicked.connect(lambda: self._add_host_field("hostname"))
+        ahn_t_l.addWidget(self._btn_add_hn_trailing)
+        ahn_t_l.addStretch()
+
+        self._add_ip_trailing_widget = QWidget()
+        self._add_ip_trailing_widget.setAttribute(Qt.WA_TranslucentBackground)
+        aip_t_l = QHBoxLayout(self._add_ip_trailing_widget)
+        aip_t_l.setContentsMargins(84, 0, 0, 0)
+        aip_t_l.setSpacing(6)
+        btn_add_ip_t = QPushButton("Add IP Address")
+        btn_add_ip_t.setObjectName("btn_add_green")
+        btn_add_ip_t.setFixedHeight(26)
+        btn_add_ip_t.clicked.connect(lambda: self._add_host_field("ip"))
+        aip_t_l.addWidget(btn_add_ip_t)
+        self._btn_lookup_ip_trailing = QPushButton("Look up IP")
+        self._btn_lookup_ip_trailing.setObjectName("btn_add_green")
+        self._btn_lookup_ip_trailing.setFixedHeight(26)
+        self._btn_lookup_ip_trailing.setToolTip("Resolve address to IP via DNS")
+        self._btn_lookup_ip_trailing.clicked.connect(self._lookup_ip_direct)
+        self._btn_lookup_ip_trailing.hide()
+        aip_t_l.addWidget(self._btn_lookup_ip_trailing)
+        aip_t_l.addStretch()
+
+        # Sub-container — holds host rows in preferred order
+        self._host_section = QWidget()
+        self._host_section.setAttribute(Qt.WA_TranslucentBackground)
+        self._hsl = QVBoxLayout(self._host_section)
+        self._hsl.setContentsMargins(0, 0, 0, 0)
+        self._hsl.setSpacing(layout.spacing())
+        layout.addWidget(self._host_section)
+        layout.addLayout(type_row)  # Type below identifiers
+
+        # Hostname input row
+        self._hostname_row_widget = QWidget()
+        self._hostname_row_widget.setAttribute(Qt.WA_TranslucentBackground)
+        hn_layout = QHBoxLayout(self._hostname_row_widget)
+        hn_layout.setContentsMargins(0, 0, 0, 0)
+        hn_layout.setSpacing(4)
+        self._lbl_hn = QLabel("Hostname:")
+        self._lbl_hn.setFixedWidth(80)
+        self._lbl_hn.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        hn_layout.addWidget(self._lbl_hn)
+        hn_layout.addWidget(self._host)
+        btn_rm_hn = QPushButton("×")
+        btn_rm_hn.setObjectName("btn_danger")
+        btn_rm_hn.setFixedSize(26, 26)
+        btn_rm_hn.setToolTip("Remove hostname")
+        btn_rm_hn.clicked.connect(lambda: self._remove_host_field("hostname"))
+        hn_layout.addWidget(btn_rm_hn)
+        self._hostname_row_widget.hide()
+
+        # WEB-type hostname access options (per-address scheme + port)
+        self._web_hn_opts_widget = QWidget()
+        self._web_hn_opts_widget.setAttribute(Qt.WA_TranslucentBackground)
+        who_layout = QHBoxLayout(self._web_hn_opts_widget)
+        who_layout.setContentsMargins(84, 0, 30, 0)
+        who_layout.setSpacing(6)
+        who_lbl = QLabel("via:")
+        who_lbl.setStyleSheet("color: #888; font-size: 11px; background: transparent;")
+        who_layout.addWidget(who_lbl)
+        self._web_hn_scheme_combo = QComboBox()
+        self._web_hn_scheme_combo.addItems(["https", "http"])
+        self._web_hn_scheme_combo.setFixedWidth(80)
+        self._web_hn_scheme_combo.currentTextChanged.connect(self._on_hn_scheme_changed)
+        who_layout.addWidget(self._web_hn_scheme_combo)
+        who_port_lbl = QLabel("port:")
+        who_port_lbl.setStyleSheet("color: #888; background: transparent;")
+        who_layout.addWidget(who_port_lbl)
+        self._web_hn_port = QLineEdit()
+        self._web_hn_port.setFixedWidth(60)
+        self._web_hn_port.setAlignment(Qt.AlignCenter)
+        self._web_hn_port.setPlaceholderText("443")
+        who_layout.addWidget(self._web_hn_port)
+        who_layout.addStretch()
+        self._web_hn_opts_widget.hide()
+
+        # DNS suggestion row
+        self._dns_row_widget = QWidget()
+        self._dns_row_widget.setAttribute(Qt.WA_TranslucentBackground)
+        dns_rl = QHBoxLayout(self._dns_row_widget)
+        dns_rl.setContentsMargins(84, 0, 30, 0)
+        dns_rl.setSpacing(6)
+        self._dns_lbl = QLabel()
+        self._dns_lbl.setStyleSheet("color: #888; font-size: 11px; background: transparent;")
+        dns_rl.addWidget(self._dns_lbl)
+        dns_rl.addStretch()
+        self._dns_btn_accept = QPushButton("Save")
+        self._dns_btn_accept.setObjectName("btn_add_green")
+        self._dns_btn_accept.setFixedHeight(26)
+        self._dns_btn_accept.setToolTip("Add this IP")
+        self._dns_btn_accept.clicked.connect(self._dns_accept)
+        dns_rl.addWidget(self._dns_btn_accept)
+        self._dns_btn_dismiss = QPushButton("×")
+        self._dns_btn_dismiss.setObjectName("btn_danger")
+        self._dns_btn_dismiss.setFixedSize(26, 26)
+        self._dns_btn_dismiss.setToolTip("Dismiss")
+        self._dns_btn_dismiss.clicked.connect(self._dns_dismiss)
+        dns_rl.addWidget(self._dns_btn_dismiss)
+        self._dns_btn_never = QPushButton("Never")
+        self._dns_btn_never.setObjectName("btn_never")
+        self._dns_btn_never.setFixedHeight(26)
+        self._dns_btn_never.setToolTip("Disable DNS lookup feature")
+        self._dns_btn_never.clicked.connect(self._dns_never)
+        dns_rl.addWidget(self._dns_btn_never)
+        self._dns_row_widget.hide()
+
+        # IP input row
+        self._ip_row_widget = QWidget()
+        self._ip_row_widget.setAttribute(Qt.WA_TranslucentBackground)
+        ip_layout = QHBoxLayout(self._ip_row_widget)
+        ip_layout.setContentsMargins(0, 0, 0, 0)
+        ip_layout.setSpacing(4)
+        lbl_ip = QLabel("IP Address:")
+        lbl_ip.setFixedWidth(80)
+        lbl_ip.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        ip_layout.addWidget(lbl_ip)
+        ip_layout.addWidget(self._host_ip)
+        btn_rm_ip = QPushButton("×")
+        btn_rm_ip.setObjectName("btn_danger")
+        btn_rm_ip.setFixedSize(26, 26)
+        btn_rm_ip.setToolTip("Remove IP address")
+        btn_rm_ip.clicked.connect(lambda: self._remove_host_field("ip"))
+        ip_layout.addWidget(btn_rm_ip)
+        self._ip_row_widget.hide()
+
+        # WEB-type IP access options (per-IP scheme + port)
+        self._web_ip_opts_widget = QWidget()
+        self._web_ip_opts_widget.setAttribute(Qt.WA_TranslucentBackground)
+        wio_layout = QHBoxLayout(self._web_ip_opts_widget)
+        wio_layout.setContentsMargins(84, 0, 30, 0)
+        wio_layout.setSpacing(6)
+        wio_lbl = QLabel("IP via:")
+        wio_lbl.setStyleSheet("color: #888; font-size: 11px; background: transparent;")
+        wio_layout.addWidget(wio_lbl)
+        self._host_ip_scheme_combo = QComboBox()
+        self._host_ip_scheme_combo.addItems(["https", "http"])
+        self._host_ip_scheme_combo.setFixedWidth(80)
+        self._host_ip_scheme_combo.currentTextChanged.connect(self._on_ip_scheme_changed)
+        wio_layout.addWidget(self._host_ip_scheme_combo)
+        wio_port_lbl = QLabel("port:")
+        wio_port_lbl.setStyleSheet("color: #888; background: transparent;")
+        wio_layout.addWidget(wio_port_lbl)
+        self._host_ip_port = QLineEdit()
+        self._host_ip_port.setFixedWidth(60)
+        self._host_ip_port.setAlignment(Qt.AlignCenter)
+        self._host_ip_port.setPlaceholderText("443")
+        wio_layout.addWidget(self._host_ip_port)
+        wio_layout.addStretch()
+        self._web_ip_opts_widget.hide()
+
+        # Prefer row
+        prefer_widget = QWidget()
+        prefer_widget.setAttribute(Qt.WA_TranslucentBackground)
+        prefer_layout = QHBoxLayout(prefer_widget)
+        prefer_layout.setContentsMargins(0, 0, 0, 0)
+        prefer_layout.setSpacing(6)
+        lbl_prefer = QLabel("Primary:")
+        lbl_prefer.setFixedWidth(80)
+        lbl_prefer.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self._btn_prefer_hostname = QPushButton("Hostname")
+        self._btn_prefer_hostname.setObjectName("type_btn")
+        self._btn_prefer_hostname.setCheckable(True)
+        self._btn_prefer_hostname.setChecked(True)
+        self._btn_prefer_hostname.setFixedWidth(104)
+        self._btn_prefer_hostname.clicked.connect(lambda: self._set_prefer("hostname"))
+        self._btn_prefer_ip = QPushButton("IP")
+        self._btn_prefer_ip.setObjectName("type_btn")
+        self._btn_prefer_ip.setCheckable(True)
+        self._btn_prefer_ip.setFixedWidth(60)
+        self._btn_prefer_ip.clicked.connect(lambda: self._set_prefer("ip"))
+        prefer_layout.addWidget(lbl_prefer)
+        prefer_layout.addWidget(self._btn_prefer_hostname)
+        prefer_layout.addWidget(self._btn_prefer_ip)
+        prefer_layout.addStretch()
+        self._prefer_widget = prefer_widget
+        self._prefer_widget.hide()
+
+        # Port row
         self._port = QLineEdit()
         self._port.setFixedWidth(70)
         self._port.setText("22")
-        hp_row = QHBoxLayout()
-        lbl_h = QLabel("Host:")
-        lbl_h.setFixedWidth(80)
-        lbl_h.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        hp_row.addWidget(lbl_h)
-        hp_row.addWidget(self._host)
+        self._port_row_widget = QWidget()
+        self._port_row_widget.setAttribute(Qt.WA_TranslucentBackground)
+        port_row = QHBoxLayout(self._port_row_widget)
+        port_row.setContentsMargins(0, 0, 0, 0)
+        port_row.setSpacing(4)
         lbl_p = QLabel("Port:")
-        lbl_p.setContentsMargins(8, 0, 0, 0)
-        hp_row.addWidget(lbl_p)
-        hp_row.addWidget(self._port)
-        layout.addLayout(hp_row)
+        lbl_p.setFixedWidth(80)
+        lbl_p.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        port_row.addWidget(lbl_p)
+        port_row.addWidget(self._port)
+        port_row.addStretch()
+        layout.addWidget(self._port_row_widget)
+
+        # Scheme row — only shown for WEB type
+        self._scheme_combo = QComboBox()
+        self._scheme_combo.addItems(["https", "http"])
+        self._scheme_combo.setFixedWidth(80)
+        self._scheme_combo.currentTextChanged.connect(self._on_scheme_changed)
+        scheme_row = QHBoxLayout()
+        scheme_row.setContentsMargins(0, 0, 0, 0)
+        scheme_row.setSpacing(4)
+        lbl_scheme = QLabel("Scheme:")
+        lbl_scheme.setFixedWidth(80)
+        lbl_scheme.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        scheme_row.addWidget(lbl_scheme)
+        scheme_row.addWidget(self._scheme_combo)
+        scheme_row.addStretch()
+        self._scheme_row_widget = QWidget()
+        self._scheme_row_widget.setAttribute(Qt.WA_TranslucentBackground)
+        self._scheme_row_widget.setLayout(scheme_row)
+        self._scheme_row_widget.hide()
+        layout.addWidget(self._scheme_row_widget)
+
+        # Credentials section — hidden for WEB type
+        self._credentials_widget = QWidget()
+        self._credentials_widget.setAttribute(Qt.WA_TranslucentBackground)
+        cred_layout = QVBoxLayout(self._credentials_widget)
+        cred_layout.setContentsMargins(0, 0, 0, 0)
+        cred_layout.setSpacing(layout.spacing())
 
         # User dropdown
         user_labels = ["-- Manual --"] + [
@@ -487,16 +751,54 @@ class ConnectionDialog(QDialog):
         self._user_combo = QComboBox()
         self._user_combo.addItems(user_labels)
         self._user_combo.currentTextChanged.connect(self._on_user_change)
-        layout.addLayout(_row("User:", self._user_combo))
+        cred_layout.addLayout(_row("User:", self._user_combo))
 
         # Username
         self._username = QLineEdit()
-        layout.addLayout(_row("Username:", self._username))
+        cred_layout.addLayout(_row("Username:", self._username))
 
-        # Password
+        # Password — hidden until added
         self._password = QLineEdit()
         self._password.setEchoMode(QLineEdit.Password)
-        layout.addLayout(_row("Password:", self._password))
+
+        self._add_pw_widget = QWidget()
+        self._add_pw_widget.setAttribute(Qt.WA_TranslucentBackground)
+        apw_layout = QHBoxLayout(self._add_pw_widget)
+        apw_layout.setContentsMargins(84, 0, 0, 0)
+        apw_layout.setSpacing(6)
+        self._add_pw_btn = QPushButton("Add Password")
+        self._add_pw_btn.setObjectName("btn_add_green")
+        self._add_pw_btn.setFixedHeight(26)
+        self._add_pw_btn.clicked.connect(self._add_password_field)
+        apw_layout.addWidget(self._add_pw_btn)
+        apw_layout.addStretch()
+        cred_layout.addWidget(self._add_pw_widget)
+
+        self._password_row_widget = QWidget()
+        self._password_row_widget.setAttribute(Qt.WA_TranslucentBackground)
+        pw_rl = QHBoxLayout(self._password_row_widget)
+        pw_rl.setContentsMargins(0, 0, 0, 0)
+        pw_rl.setSpacing(4)
+        lbl_pw = QLabel("Password:")
+        lbl_pw.setFixedWidth(80)
+        lbl_pw.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        pw_rl.addWidget(lbl_pw)
+        pw_rl.addWidget(self._password)
+        btn_rm_pw = QPushButton("\u00d7")
+        btn_rm_pw.setObjectName("btn_danger")
+        btn_rm_pw.setFixedSize(26, 26)
+        btn_rm_pw.setToolTip("Remove password")
+        btn_rm_pw.clicked.connect(self._remove_password_field)
+        pw_rl.addWidget(btn_rm_pw)
+        self._password_row_widget.hide()
+        cred_layout.addWidget(self._password_row_widget)
+
+        layout.addWidget(self._credentials_widget)
+
+        # Alias — optional; if empty the primary identifier is used as the card title
+        self._alias = QLineEdit()
+        self._alias.setPlaceholderText("Optional — uses primary identifier if blank")
+        layout.addLayout(_row("Alias:", self._alias))
 
         # Notes
         self._notes = QTextEdit()
@@ -518,30 +820,186 @@ class ConnectionDialog(QDialog):
 
         # Pre-populate
         if record:
-            self._name.setText(record["name"])
+            self._alias.setText(record["name"])
             self._set_type(record["type"])
-            self._host.setText(record["host"])
+            if record["host"]:
+                self._host.setText(record["host"])
+                self._add_host_field("hostname")
+            if record["host_ip"]:
+                self._host_ip.setText(record["host_ip"])
+                self._add_host_field("ip")
+            self._set_prefer(record["host_prefer"])
             self._port.setText(str(record["port"]))
-            self._username.setText(record["username"])
-            self._password.setText(record["password"])
-            self._notes.setPlainText(record["notes"])
-            if record["user_id"]:
-                for u in self._users:
-                    if u["id"] == record["user_id"]:
-                        label = f"{u['display_name']} ({u['username']})"
-                        idx = self._user_combo.findText(label)
+            scheme = record["scheme"]
+            if scheme:
+                idx = self._scheme_combo.findText(scheme)
+                if idx >= 0:
+                    self._scheme_combo.setCurrentIndex(idx)
+            # Per-field scheme/port for WEB hosts
+            if record["type"] == "WEB":
+                # Hostname (address) opts
+                if record["host"]:
+                    hn_scheme = record["scheme"] or "https"
+                    idx = self._web_hn_scheme_combo.findText(hn_scheme)
+                    if idx >= 0:
+                        self._web_hn_scheme_combo.setCurrentIndex(idx)
+                    hn_port = record["port"]
+                    default_hn_port = 443 if hn_scheme == "https" else 80
+                    if hn_port != default_hn_port:
+                        self._web_hn_port.setText(str(hn_port))
+                # IP opts
+                if record["host_ip"]:
+                    ip_scheme = record["host_ip_scheme"]
+                    if ip_scheme:
+                        idx = self._host_ip_scheme_combo.findText(ip_scheme)
                         if idx >= 0:
-                            self._user_combo.setCurrentIndex(idx)
-                        break
+                            self._host_ip_scheme_combo.setCurrentIndex(idx)
+                    ip_port = record["host_ip_port"]
+                    if ip_port:
+                        self._host_ip_port.setText(str(ip_port))
+            if record["type"] != "WEB":
+                self._username.setText(record["username"])
+                if record["password"] and not record["user_id"]:
+                    self._password.setText(record["password"])
+                    self._add_password_field()
+                if record["user_id"]:
+                    for u in self._users:
+                        if u["id"] == record["user_id"]:
+                            label = f"{u['display_name']} ({u['username']})"
+                            idx = self._user_combo.findText(label)
+                            if idx >= 0:
+                                self._user_combo.setCurrentIndex(idx)
+                            break
+            self._notes.setPlainText(record["notes"])
 
-        self._name.setFocus()
+        self._host.setFocus()
+
+        # Spinner overlaid inside self._host, right-aligned
+        self._dns_spinner = QLabel(self._host)
+        self._dns_spinner.setFixedSize(16, 16)
+        self._dns_spinner.setAlignment(Qt.AlignCenter)
+        self._dns_spinner.setStyleSheet("color: #aaa; font-size: 12px; background: transparent;")
+        self._dns_spinner.hide()
+        self._host.setTextMargins(0, 0, 18, 0)
+        self._host.resizeEvent = self._on_host_resize
+
+        # Hostname ping label (shares position with DNS spinner — never both visible)
+        self._host_ping_lbl = QLabel(self._host)
+        self._host_ping_lbl.setFixedSize(16, 16)
+        self._host_ping_lbl.setAlignment(Qt.AlignCenter)
+        self._host_ping_lbl.setStyleSheet("font-size: 12px; background: transparent;")
+        self._host_ping_lbl.hide()
+
+        # IP ping label (braille while pinging, ● when done)
+        self._ip_ping_lbl = QLabel(self._host_ip)
+        self._ip_ping_lbl.setFixedSize(16, 16)
+        self._ip_ping_lbl.setAlignment(Qt.AlignCenter)
+        self._ip_ping_lbl.setStyleSheet("color: #aaa; font-size: 12px; background: transparent;")
+        self._ip_ping_lbl.hide()
+
+        # "Look up IP" button — overlaid right-aligned inside _host_ip, WEB type only
+        self._btn_lookup_ip = QPushButton("🔍", self._host_ip)
+        self._btn_lookup_ip.setFixedSize(22, 22)
+        self._btn_lookup_ip.setToolTip("Resolve address to IP via DNS")
+        self._btn_lookup_ip.setStyleSheet(
+            "QPushButton { background: transparent; border: 1px solid transparent;"
+            " border-radius: 4px; color: #4ade80; font-size: 13px; padding: 0; }"
+            "QPushButton:hover { border-color: #4ade80; background: rgba(74,222,128,0.12); }"
+        )
+        self._btn_lookup_ip.clicked.connect(self._lookup_ip_direct)
+        self._btn_lookup_ip.hide()
+        self._host_ip.setTextMargins(0, 0, 18, 0)
+        self._host_ip.resizeEvent = self._on_host_ip_resize
+
+        # DNS debounce timer
+        self._dns_debounce = QTimer(self)
+        self._dns_debounce.setSingleShot(True)
+        self._dns_debounce.setInterval(250)
+        self._dns_debounce.timeout.connect(self._start_dns_lookup)
+
+        # DNS animation timer
+        self._dns_anim_timer = QTimer(self)
+        self._dns_anim_timer.setInterval(120)
+        self._dns_anim_timer.timeout.connect(self._tick_dns_spinner)
+
+        # IP ping debounce + animation timers
+        self._ip_ping_debounce = QTimer(self)
+        self._ip_ping_debounce.setSingleShot(True)
+        self._ip_ping_debounce.setInterval(600)
+        self._ip_ping_debounce.timeout.connect(self._start_ip_ping)
+        self._ip_ping_anim_timer = QTimer(self)
+        self._ip_ping_anim_timer.setInterval(120)
+        self._ip_ping_anim_timer.timeout.connect(self._tick_ip_ping_spinner)
+
+        # Hostname ping debounce + animation timers
+        self._host_ping_debounce = QTimer(self)
+        self._host_ping_debounce.setSingleShot(True)
+        self._host_ping_debounce.setInterval(600)
+        self._host_ping_debounce.timeout.connect(self._start_host_ping)
+        self._host_ping_anim_timer = QTimer(self)
+        self._host_ping_anim_timer.setInterval(120)
+        self._host_ping_anim_timer.timeout.connect(self._tick_host_ping_spinner)
+
+        # Wire signals
+        self._dns_resolved.connect(self._on_dns_result)
+        self._ip_ping_result.connect(self._on_ip_ping_result)
+        self._host_ping_result.connect(self._on_host_ping_result)
+        self._host.textChanged.connect(self._on_host_text_changed)
+        self._host_ip.textChanged.connect(self._on_ip_text_changed)
+
+        # Trigger pings immediately when opening to edit an existing host
+        if record:
+            if record["host"]:
+                self._host_ping_debounce.start()
+            if record["host_ip"] and self._validate_ip(record["host_ip"]):
+                self._ip_ping_debounce.start()
 
     def _set_type(self, conn_type: str) -> None:
         self._btn_ssh.setChecked(conn_type == "SSH")
         self._btn_rdp.setChecked(conn_type == "RDP")
+        self._btn_web.setChecked(conn_type == "WEB")
+        is_web = conn_type == "WEB"
+        self._credentials_widget.setVisible(not is_web)
+        self._port_row_widget.setVisible(not is_web)
+        # Show lookup button in IP field when WEB type and field is currently empty
+        show_lookup = is_web and not self._host_ip.text().strip()
+        self._btn_lookup_ip.setVisible(show_lookup)
+        self._host_ip.setTextMargins(0, 0, 26 if show_lookup else 18, 0)
+        # Show trailing lookup button only for WEB when address is filled and IP not added
+        self._btn_lookup_ip_trailing.setVisible(
+            is_web and bool(self._host.text().strip()) and self._can_add_ip
+        )
+        # Rename hostname label and buttons for WEB type
+        hn_label = "Address:" if is_web else "Hostname:"
+        self._lbl_hn.setText(hn_label)
+        add_hn_text = "Add Address" if is_web else "Add Hostname"
+        self._add_hostname_btn.setText(add_hn_text)
+        self._btn_add_hn_trailing.setText(add_hn_text)
+        if not is_web:
+            cur = self._port.text().strip()
+            if cur in ("", "80", "443"):
+                self._port.setText(str(_DEFAULT_PORTS[conn_type]))
+        # Rebuild layout so web opts widgets show/hide correctly
+        self._rebuild_host_order()
+        self.adjustSize()
+
+    def _on_scheme_changed(self, scheme: str) -> None:
+        """Auto-adjust port when scheme switches, unless user has customised it."""
         cur = self._port.text().strip()
-        if cur in ("", "22", "3389"):
-            self._port.setText(str(_DEFAULT_PORTS[conn_type]))
+        if cur in ("80", "443", ""):
+            self._port.setText("443" if scheme == "https" else "80")
+
+    def _on_hn_scheme_changed(self, scheme: str) -> None:
+        """Auto-adjust hostname port when scheme switches."""
+        cur = self._web_hn_port.text().strip()
+        if cur in ("80", "443", ""):
+            self._web_hn_port.setText("443" if scheme == "https" else "80")
+
+    def _on_ip_scheme_changed(self, scheme: str) -> None:
+        """Auto-adjust IP port when IP scheme switches."""
+        cur = self._host_ip_port.text().strip()
+        if cur in ("80", "443", ""):
+            self._host_ip_port.setText("443" if scheme == "https" else "80")
 
     def _on_user_change(self, value: str) -> None:
         if value == "-- Manual --":
@@ -554,7 +1012,396 @@ class ConnectionDialog(QDialog):
                 self._username.setEnabled(False)
                 self._password.setText(u["password"])
                 self._password.setEnabled(False)
+                self._add_password_field()
                 break
+
+    def _set_prefer(self, prefer: str) -> None:
+        self._btn_prefer_hostname.setChecked(prefer == "hostname")
+        self._btn_prefer_ip.setChecked(prefer == "ip")
+        # Reorder rows if both fields are present
+        if not self._can_add_hostname and not self._can_add_ip:
+            self._rebuild_host_order()
+            self.adjustSize()
+
+    def _rebuild_host_order(self) -> None:
+        """Re-insert host rows into the sub-container in preferred order."""
+        for w in [self._hostname_row_widget, self._dns_row_widget,
+                  self._web_hn_opts_widget,
+                  self._ip_row_widget, self._web_ip_opts_widget,
+                  self._prefer_widget,
+                  self._add_hn_trailing_widget, self._add_ip_trailing_widget]:
+            self._hsl.removeWidget(w)
+            w.hide()
+
+        prefer_ip = self._btn_prefer_ip.isChecked()
+        hn_added = not self._can_add_hostname
+        ip_added = not self._can_add_ip
+        is_web = self._btn_web.isChecked()
+
+        # Combined add-buttons widget shown only when neither field is added yet
+        self._add_btns_widget.setVisible(not hn_added and not ip_added)
+        # Hide the sub-container itself when empty to avoid phantom spacing
+        self._host_section.setVisible(hn_added or ip_added)
+        # "Look up IP" in trailing widget: WEB + address filled + IP not yet added
+        self._btn_lookup_ip_trailing.setVisible(
+            is_web and bool(self._host.text().strip()) and not ip_added and hn_added
+        )
+
+        def _add_hostname_block() -> None:
+            self._hsl.addWidget(self._hostname_row_widget)
+            self._hostname_row_widget.show()
+            self._hsl.addWidget(self._dns_row_widget)
+            if self._dns_row_shown:
+                self._dns_row_widget.show()
+            # For WEB hosts, show the per-address scheme/port options below
+            if is_web:
+                self._hsl.addWidget(self._web_hn_opts_widget)
+                self._web_hn_opts_widget.show()
+
+        def _add_ip_block() -> None:
+            self._hsl.addWidget(self._ip_row_widget)
+            self._ip_row_widget.show()
+            # For WEB hosts, show the per-IP scheme/port options below
+            if is_web:
+                self._hsl.addWidget(self._web_ip_opts_widget)
+                self._web_ip_opts_widget.show()
+
+        if prefer_ip:
+            if ip_added:
+                _add_ip_block()
+            if hn_added:
+                _add_hostname_block()
+        else:
+            if hn_added:
+                _add_hostname_block()
+            if ip_added:
+                _add_ip_block()
+
+        if hn_added and ip_added:
+            self._hsl.addWidget(self._prefer_widget)
+            self._prefer_widget.show()
+        elif hn_added:
+            # Hostname present, IP not — offer "Add IP" below
+            self._hsl.addWidget(self._add_ip_trailing_widget)
+            self._add_ip_trailing_widget.show()
+        elif ip_added:
+            # IP present, hostname not — offer "Add Hostname" below
+            self._hsl.addWidget(self._add_hn_trailing_widget)
+            self._add_hn_trailing_widget.show()
+
+    def _add_host_field(self, field: str) -> None:
+        if field == "hostname":
+            self._can_add_hostname = False
+            if not self._first_added:
+                self._first_added = "hostname"
+                self._btn_prefer_hostname.setChecked(True)
+                self._btn_prefer_ip.setChecked(False)
+        else:
+            self._can_add_ip = False
+            if not self._first_added:
+                self._first_added = "ip"
+                self._btn_prefer_ip.setChecked(True)
+                self._btn_prefer_hostname.setChecked(False)
+        self._rebuild_host_order()
+        self.adjustSize()
+
+    def _remove_host_field(self, field: str) -> None:
+        if field == "hostname":
+            self._host.clear()
+            self._host_last_pinged = ""
+            self._host_ping_debounce.stop()
+            self._host_ping_anim_timer.stop()
+            self._host_ping_lbl.hide()
+            self._can_add_hostname = True
+            # If hostname was primary and IP still exists, switch primary to IP
+            if not self._btn_prefer_ip.isChecked() and not self._can_add_ip:
+                self._btn_prefer_ip.setChecked(True)
+                self._btn_prefer_hostname.setChecked(False)
+        else:
+            self._host_ip.clear()
+            self._ip_last_pinged = ""
+            self._ip_ping_debounce.stop()
+            self._ip_ping_anim_timer.stop()
+            self._ip_ping_lbl.hide()
+            self._can_add_ip = True
+            # If IP was primary and hostname still exists, switch primary to hostname
+            if self._btn_prefer_ip.isChecked() and not self._can_add_hostname:
+                self._btn_prefer_hostname.setChecked(True)
+                self._btn_prefer_ip.setChecked(False)
+        # Update first_added to reflect remaining field
+        if not self._can_add_hostname and self._can_add_ip:
+            self._first_added = "hostname"
+        elif self._can_add_hostname and not self._can_add_ip:
+            self._first_added = "ip"
+        else:
+            self._first_added = ""
+        self._dns_row_shown = False
+        self._rebuild_host_order()
+        self.adjustSize()
+
+    def _add_password_field(self) -> None:
+        self._password_row_widget.show()
+        self._add_pw_widget.hide()
+        self.adjustSize()
+
+    def _remove_password_field(self) -> None:
+        self._password_row_widget.hide()
+        self._password.clear()
+        self._password.setEnabled(True)
+        self._add_pw_widget.show()
+        self.adjustSize()
+
+    def _on_host_resize(self, event) -> None:
+        h = self._host.height()
+        sw = self._dns_spinner.width()
+        x = self._host.width() - sw - 8
+        y = (h - self._dns_spinner.height()) // 2
+        self._dns_spinner.move(x, y)
+        self._host_ping_lbl.move(x, y)
+        QLineEdit.resizeEvent(self._host, event)
+
+    def _on_host_ip_resize(self, event) -> None:
+        h = self._host_ip.height()
+        lw = self._ip_ping_lbl.width()
+        x = self._host_ip.width() - lw - 8
+        y = (h - self._ip_ping_lbl.height()) // 2
+        self._ip_ping_lbl.move(x, y)
+        bw = self._btn_lookup_ip.width()
+        self._btn_lookup_ip.move(self._host_ip.width() - bw - 4,
+                                 (h - self._btn_lookup_ip.height()) // 2)
+        QLineEdit.resizeEvent(self._host_ip, event)
+
+    def _on_host_text_changed(self, text: str) -> None:
+        self._dns_anim_timer.stop()
+        self._dns_spinner.hide()
+        self._dns_debounce.stop()
+        self._host_ping_debounce.stop()
+        self._host_ping_anim_timer.stop()
+        self._host_ping_lbl.hide()
+        self._host_last_pinged = ""
+        if self._dns_row_shown:
+            self._dns_row_shown = False
+            focused = self.focusWidget()
+            self._rebuild_host_order()
+            self.adjustSize()
+            if focused:
+                focused.setFocus()
+        hostname = text.strip()
+        if hostname:
+            # DNS lookup doesn't make sense for WEB hosts (IP might be a different machine)
+            if database.get_setting("nslookup_on_hostname") != "0" and not self._btn_web.isChecked():
+                self._dns_debounce.start()
+            self._host_ping_debounce.start()
+        # Show "Look up IP" in the trailing widget when WEB + address filled + no IP yet
+        is_web = self._btn_web.isChecked()
+        show_lookup_trailing = is_web and bool(hostname) and self._can_add_ip
+        self._btn_lookup_ip_trailing.setVisible(show_lookup_trailing)
+
+    def _tick_dns_spinner(self) -> None:
+        self._dns_anim_frame = (self._dns_anim_frame + 1) % len(_SPINNER_FRAMES)
+        self._dns_spinner.setText(_SPINNER_FRAMES[self._dns_anim_frame])
+
+    def _lookup_ip_direct(self) -> None:
+        """Trigger DNS lookup and fill the IP field directly (no suggestion row)."""
+        self._lookup_direct = True
+        self._start_dns_lookup()
+
+    def _start_dns_lookup(self) -> None:
+        hostname = self._host.text().strip()
+        if not hostname:
+            return
+        # For SSH/RDP, respect the nslookup setting; for WEB it's always manual
+        if not self._btn_web.isChecked() and database.get_setting("nslookup_on_hostname") == "0":
+            return
+        self._dns_pending_host = hostname
+        h = self._host.height()
+        sw = self._dns_spinner.width()
+        self._dns_spinner.move(self._host.width() - sw - 8, (h - self._dns_spinner.height()) // 2)
+        self._dns_spinner.setText(_SPINNER_FRAMES[0])
+        self._dns_spinner.show()
+        self._dns_spinner.raise_()
+        self._dns_anim_timer.start()
+
+        def _work() -> None:
+            import socket as _socket
+            try:
+                results = _socket.getaddrinfo(hostname, None, _socket.AF_INET)
+                ip = results[0][4][0] if results else ""
+            except Exception:
+                ip = ""
+            self._dns_resolved.emit(ip)
+
+        threading.Thread(target=_work, daemon=True).start()
+
+    def _on_dns_result(self, ip: str) -> None:
+        self._dns_anim_timer.stop()
+        self._dns_spinner.hide()
+        if self._host.text().strip() != self._dns_pending_host:
+            self._lookup_direct = False
+            return
+        if not ip:
+            self._lookup_direct = False
+            return
+        self._dns_resolved_ip = ip
+        # Direct mode: fill field immediately, no suggestion row
+        if getattr(self, "_lookup_direct", False):
+            self._lookup_direct = False
+            if self._can_add_ip:
+                self._host_ip.setText(ip)
+                self._add_host_field("ip")
+            else:
+                self._host_ip.setText(ip)
+            return
+        if self._can_add_ip:
+            self._dns_lbl.setText(f"Resolved to  {ip}")
+        else:
+            current = self._host_ip.text().strip()
+            if current == ip:
+                return  # already matches, no suggestion
+            self._dns_lbl.setText(f"Change IP to  {ip}" if current else f"Resolved to  {ip}")
+        self._dns_row_shown = True
+        focused = self.focusWidget()
+        self._rebuild_host_order()
+        self.adjustSize()
+        if focused:
+            focused.setFocus()
+
+    def _dns_accept(self) -> None:
+        ip = getattr(self, "_dns_resolved_ip", "")
+        self._dns_row_shown = False
+        focused = self.focusWidget()
+        self._rebuild_host_order()
+        self.adjustSize()
+        if focused:
+            focused.setFocus()
+        if ip:
+            if self._can_add_ip:
+                self._host_ip.setText(ip)
+                self._add_host_field("ip")
+            else:
+                self._host_ip.setText(ip)
+
+    def _dns_dismiss(self) -> None:
+        self._dns_row_shown = False
+        focused = self.focusWidget()
+        self._rebuild_host_order()
+        self.adjustSize()
+        if focused:
+            focused.setFocus()
+
+    def _dns_never(self) -> None:
+        self._dns_row_shown = False
+        self._rebuild_host_order()
+        self.adjustSize()
+        database.set_setting("nslookup_on_hostname", "0")
+
+    def _on_ip_text_changed(self, text: str) -> None:
+        self._ip_ping_debounce.stop()
+        self._ip_ping_anim_timer.stop()
+        self._ip_ping_lbl.hide()
+        self._ip_last_pinged = ""
+        ip = text.strip()
+        is_web = self._btn_web.isChecked()
+        # Show lookup button only for WEB when field is empty
+        show_lookup = is_web and not ip
+        self._btn_lookup_ip.setVisible(show_lookup)
+        self._host_ip.setTextMargins(0, 0, 26 if show_lookup else 18, 0)
+        if ip and self._validate_ip(ip):
+            self._ip_ping_debounce.start()
+
+    def _tick_ip_ping_spinner(self) -> None:
+        self._ip_ping_anim_frame = (self._ip_ping_anim_frame + 1) % len(_SPINNER_FRAMES)
+        self._ip_ping_lbl.setText(_SPINNER_FRAMES[self._ip_ping_anim_frame])
+
+    def _start_ip_ping(self) -> None:
+        ip = self._host_ip.text().strip().split("/")[0]  # strip path if present
+        if not ip or not self._validate_ip(ip):
+            return
+        self._ip_last_pinged = ip
+        self._ip_ping_anim_frame = 0
+        h = self._host_ip.height()
+        lw = self._ip_ping_lbl.width()
+        self._ip_ping_lbl.move(self._host_ip.width() - lw - 8, (h - self._ip_ping_lbl.height()) // 2)
+        self._ip_ping_lbl.setText(_SPINNER_FRAMES[0])
+        self._ip_ping_lbl.setStyleSheet("color: #aaa; font-size: 12px; background: transparent;")
+        self._ip_ping_lbl.show()
+        self._ip_ping_lbl.raise_()
+        self._ip_ping_anim_timer.start()
+
+        def _work() -> None:
+            try:
+                if sys.platform == "win32":
+                    cmd = ["ping", "-n", "1", "-w", "1500", ip]
+                    kw: dict = {"creationflags": subprocess.CREATE_NO_WINDOW}
+                else:
+                    cmd = ["ping", "-c", "1", "-W", "2", ip]
+                    kw = {}
+                r = subprocess.run(cmd, capture_output=True, **kw)
+                online = r.returncode == 0
+            except Exception:
+                online = False
+            self._ip_ping_result.emit(online)
+
+        threading.Thread(target=_work, daemon=True).start()
+
+    def _on_ip_ping_result(self, online: bool) -> None:
+        self._ip_ping_anim_timer.stop()
+        color = "#22c55e" if online else "#ef4444"
+        self._ip_ping_lbl.setText("●")
+        self._ip_ping_lbl.setStyleSheet(f"color: {color}; font-size: 14px; background: transparent;")
+        self._ip_ping_lbl.show()
+
+    def _tick_host_ping_spinner(self) -> None:
+        self._host_ping_anim_frame = (self._host_ping_anim_frame + 1) % len(_SPINNER_FRAMES)
+        self._host_ping_lbl.setText(_SPINNER_FRAMES[self._host_ping_anim_frame])
+
+    def _start_host_ping(self) -> None:
+        hostname = self._host.text().strip()
+        if not hostname:
+            return
+        self._host_last_pinged = hostname
+        self._host_ping_anim_frame = 0
+        h = self._host.height()
+        sw = self._host_ping_lbl.width()
+        self._host_ping_lbl.move(self._host.width() - sw - 8, (h - self._host_ping_lbl.height()) // 2)
+        self._host_ping_lbl.setText(_SPINNER_FRAMES[0])
+        self._host_ping_lbl.setStyleSheet("color: #aaa; font-size: 12px; background: transparent;")
+        self._host_ping_lbl.show()
+        self._host_ping_lbl.raise_()
+        self._host_ping_anim_timer.start()
+
+        def _work() -> None:
+            try:
+                if sys.platform == "win32":
+                    cmd = ["ping", "-n", "1", "-w", "1500", hostname]
+                    kw: dict = {"creationflags": subprocess.CREATE_NO_WINDOW}
+                else:
+                    cmd = ["ping", "-c", "1", "-W", "2", hostname]
+                    kw = {}
+                r = subprocess.run(cmd, capture_output=True, **kw)
+                online = r.returncode == 0
+            except Exception:
+                online = False
+            self._host_ping_result.emit(online)
+
+        threading.Thread(target=_work, daemon=True).start()
+
+    def _on_host_ping_result(self, online: bool) -> None:
+        self._host_ping_anim_timer.stop()
+        color = "#22c55e" if online else "#ef4444"
+        self._host_ping_lbl.setText("●")
+        self._host_ping_lbl.setStyleSheet(f"color: {color}; font-size: 14px; background: transparent;")
+        self._host_ping_lbl.show()
+
+    @staticmethod
+    @staticmethod
+    def _validate_ip(ip: str) -> bool:
+        # Strip optional path (e.g. "10.0.0.1/dashboard/" → "10.0.0.1")
+        ip = ip.split("/")[0]
+        parts = ip.split(".")
+        if len(parts) != 4:
+            return False
+        return all(p.isdigit() and 0 <= int(p) <= 255 for p in parts)
 
     def _selected_user_id(self) -> Optional[int]:
         val = self._user_combo.currentText()
@@ -566,32 +1413,59 @@ class ConnectionDialog(QDialog):
         return None
 
     def _save(self) -> None:
-        name = self._name.text().strip()
+        name = self._alias.text().strip()
         host = self._host.text().strip()
-        port_str = self._port.text().strip()
-        conn_type = "SSH" if self._btn_ssh.isChecked() else "RDP"
-        user_id = self._selected_user_id()
+        host_ip = self._host_ip.text().strip()
+        host_prefer = "ip" if self._btn_prefer_ip.isChecked() else "hostname"
+        conn_type = "WEB" if self._btn_web.isChecked() else ("SSH" if self._btn_ssh.isChecked() else "RDP")
+        is_web = conn_type == "WEB"
 
-        # Briefly re-enable to read values
-        un_dis = not self._username.isEnabled()
-        pw_dis = not self._password.isEnabled()
-        self._username.setEnabled(True)
-        self._password.setEnabled(True)
-        username = self._username.text().strip()
-        password = self._password.text()
+        # Derive scheme / port depending on type
+        if is_web:
+            hn_added = not self._can_add_hostname
+            ip_only = not hn_added and not self._can_add_ip
+            if hn_added:
+                scheme = self._web_hn_scheme_combo.currentText()
+                port_str = self._web_hn_port.text().strip() or ("443" if scheme == "https" else "80")
+            elif ip_only:
+                scheme = self._host_ip_scheme_combo.currentText()
+                port_str = self._host_ip_port.text().strip() or ("443" if scheme == "https" else "80")
+            else:
+                scheme, port_str = "https", "443"
+            host_ip_scheme = self._host_ip_scheme_combo.currentText() if host_ip else ""
+            host_ip_port_str = self._host_ip_port.text().strip() if host_ip else ""
+        else:
+            scheme = ""
+            port_str = self._port.text().strip()
+            host_ip_scheme = ""
+            host_ip_port_str = ""
+
+        user_id = None
+        username = ""
+        password = ""
+        if not is_web:
+            user_id = self._selected_user_id()
+            # Re-enable disabled fields momentarily so text() can be read
+            un_dis = not self._username.isEnabled()
+            if un_dis:
+                self._username.setEnabled(True)
+            username = self._username.text().strip()
+            if un_dis:
+                self._username.setEnabled(False)
+            password = self._password.text() if self._password_row_widget.isVisible() else ""
+
         notes = self._notes.toPlainText().strip()
-        if un_dis:
-            self._username.setEnabled(False)
-        if pw_dis:
-            self._password.setEnabled(False)
 
-        if not name:
-            QMessageBox.warning(self, "Validation", "Name is required.")
+        if not host and not host_ip:
+            QMessageBox.warning(self, "Validation", "Hostname or IP is required.")
             return
-        if not host:
-            QMessageBox.warning(self, "Validation", "Host is required.")
+        if host_ip and not self._validate_ip(host_ip):
+            QMessageBox.warning(
+                self, "Validation",
+                "IP address is not valid.\nExpected format: 0–255 per octet (e.g. 192.168.1.1)."
+            )
             return
-        if not username:
+        if not is_web and not username:
             QMessageBox.warning(self, "Validation", "Username is required.")
             return
         try:
@@ -601,9 +1475,18 @@ class ConnectionDialog(QDialog):
         except ValueError:
             QMessageBox.warning(self, "Validation", "Port must be 1–65535.")
             return
+        try:
+            host_ip_port = int(host_ip_port_str) if host_ip_port_str else 0
+            if host_ip_port and not 1 <= host_ip_port <= 65535:
+                raise ValueError
+        except ValueError:
+            QMessageBox.warning(self, "Validation", "IP port must be 1–65535.")
+            return
 
         self._result = {
-            "name": name, "type": conn_type, "host": host, "port": port,
+            "name": name, "type": conn_type, "host": host, "host_ip": host_ip,
+            "host_prefer": host_prefer, "port": port, "scheme": scheme,
+            "host_ip_scheme": host_ip_scheme, "host_ip_port": host_ip_port,
             "user_id": user_id, "username": username, "password": password,
             "notes": notes,
         }
@@ -882,11 +1765,13 @@ class HostCard(QWidget):
         self._on_right = on_right_click
         self._active_count = 0
         self._connecting = False
+        self._is_web = record["type"] == "WEB"
         self._dot_timer = QTimer(self)
         self._dot_timer.timeout.connect(self._animate_dots)
         self._dot_count = 0
         # Pre-load hover icons once per card (QApp already running at this point)
         self._icon_connect = _load_icon("paperplane-svgrepo", color="white", size=26)
+        self._icon_open = _load_icon("globe-svgrepo", color="white", size=26)
         self._icon_bring = _load_icon("bring-to-front-svgrepo", color="white", size=26)
 
         # ── inner card frame ──────────────────────────────────────────────
@@ -913,21 +1798,74 @@ class HostCard(QWidget):
         info_layout.setContentsMargins(8, 0, 8, 0)
         info_layout.setSpacing(2)
 
-        self._name_lbl = QLabel(record["name"])
+        alias = record["name"]          # may be empty
+        default_port = _DEFAULT_PORTS.get(record["type"])
+        is_nonstandard = record["port"] != default_port
+        # Read port-display settings
+        _port_show   = database.get_setting("card_port_show")    # primary|secondary|both|none
+        _port_filter = (
+            database.get_setting("card_port_filter_web")
+            if record["type"] == "WEB"
+            else database.get_setting("card_port_filter")
+        )
+        def _with_port(addr: str, on: bool) -> str:
+            """Return addr with ':port' inserted after the host (before any path)."""
+            if not on:
+                return addr
+            if _port_filter == "nonstandard" and not is_nonstandard:
+                return addr
+            if "/" in addr:
+                host_part, path_part = addr.split("/", 1)
+                return f"{host_part}:{record['port']}/{path_part}"
+            return f"{addr}:{record['port']}"
+        primary_sfx   = _with_port  # used as a callable below
+        secondary_sfx = _with_port
+        show_primary_port   = _port_show in ("primary", "both")
+        show_secondary_port = _port_show in ("secondary", "both")
+        # Respect host_prefer when picking primary vs secondary
+        prefer_ip = record["host_prefer"] == "ip"
+        if prefer_ip:
+            primary_addr = record["host_ip"] or record["host"]
+            secondary_addr = record["host"] if (record["host"] and record["host_ip"]) else ""
+        else:
+            primary_addr = record["host"] or record["host_ip"]
+            secondary_addr = record["host_ip"] if (record["host"] and record["host_ip"]) else ""
+
+        # Title: alias if set, otherwise primary identifier (with port)
+        if alias:
+            title = alias
+            primary_line = _with_port(primary_addr, show_primary_port)
+            show_secondary = database.get_setting("show_secondary_on_card") != "0"
+            secondary_line = _with_port(secondary_addr, show_secondary_port) if (show_secondary and secondary_addr) else ""
+        else:
+            title = _with_port(primary_addr, show_primary_port)
+            primary_line = ""   # title already is the primary
+            secondary_line = _with_port(secondary_addr, show_secondary_port) if secondary_addr else ""  # always show when no alias
+
+        self._name_lbl = QLabel(title)
         self._name_lbl.setAlignment(Qt.AlignCenter)
         self._name_lbl.setStyleSheet(
             "background: transparent; font-size: 16px; font-weight: bold;"
         )
         info_layout.addWidget(self._name_lbl)
 
-        default_port = _DEFAULT_PORTS.get(record["type"])
-        port_suffix = "" if record["port"] == default_port else f":{record['port']}"
-        self._addr_lbl = QLabel(f"{record['host']}{port_suffix}")
+        # Primary address sub-line (only when alias is set)
+        self._addr_lbl = QLabel(primary_line)
         self._addr_lbl.setAlignment(Qt.AlignCenter)
         self._addr_lbl.setStyleSheet(
             "background: transparent; font-size: 10px; color: #888;"
         )
+        self._addr_lbl.setVisible(bool(primary_line))
         info_layout.addWidget(self._addr_lbl)
+
+        # Secondary address line
+        self._secondary_lbl = QLabel(secondary_line)
+        self._secondary_lbl.setAlignment(Qt.AlignCenter)
+        self._secondary_lbl.setStyleSheet(
+            "background: transparent; font-size: 10px; color: #888;"
+        )
+        self._secondary_lbl.setVisible(bool(secondary_line))
+        info_layout.addWidget(self._secondary_lbl)
 
         self._info_widget = info   # store ref for hide/show
         card_layout.addWidget(info)
@@ -994,6 +1932,9 @@ class HostCard(QWidget):
             if self._active_count > 0:
                 self._hover_text = "Bring to front"
                 icon = self._icon_bring
+            elif self._is_web:
+                self._hover_text = "Open"
+                icon = self._icon_open
             else:
                 self._hover_text = "Connect"
                 icon = self._icon_connect
@@ -1058,6 +1999,18 @@ class HostCard(QWidget):
         """Update protocol badge visibility based on settings."""
         show_badge = database.get_setting("show_protocol_badge") != "0"
         self._protocol_badge.setVisible(show_badge)
+
+    def update_secondary_visibility(self) -> None:
+        """Show/hide secondary identifier line based on settings (alias-only cards)."""
+        alias = self._record["name"]
+        if not alias:
+            # No alias: secondary always shown if it exists — nothing to toggle
+            return
+        show = database.get_setting("show_secondary_on_card") != "0"
+        if show and self._secondary_lbl.text():
+            self._secondary_lbl.show()
+        else:
+            self._secondary_lbl.hide()
 
     @property
     def record(self):
@@ -1149,6 +2102,109 @@ class SettingsPage(QWidget):
         )
         self._protocol_badge_toggle.toggled.connect(self._on_protocol_badge_changed)
 
+        self._nslookup_toggle = self._make_toggle_row(
+            gen_layout, "DNS Lookup",
+            "Resolve hostname and offer to add the IP when creating/editing a host",
+            "nslookup_on_hostname",
+        )
+        self._nslookup_toggle.toggled.connect(self._on_nslookup_changed)
+
+        self._secondary_toggle = self._make_toggle_row(
+            gen_layout, "Show Secondary Identifier",
+            "Show both hostname and IP as grey text on cards that have an alias and both",
+            "show_secondary_on_card",
+        )
+        self._secondary_toggle.toggled.connect(self._on_secondary_changed)
+
+        # ── Port display row ──────────────────────────────────────────────
+        port_row_frame = QFrame()
+        port_row_frame.setObjectName("user_row")
+        port_row_frame.setAttribute(Qt.WA_StyledBackground, True)
+        port_rl = QHBoxLayout(port_row_frame)
+        port_rl.setContentsMargins(12, 8, 12, 8)
+        port_rl.setSpacing(8)
+        port_col = QVBoxLayout()
+        port_col.setSpacing(2)
+        port_title_lbl = QLabel("Show Port On Card")
+        port_title_lbl.setStyleSheet("font-weight: bold; background: transparent;")
+        port_col.addWidget(port_title_lbl)
+        port_desc_lbl = QLabel("Which identifier line(s) include the port number")
+        port_desc_lbl.setStyleSheet("color: #888; font-size: 11px; background: transparent;")
+        port_col.addWidget(port_desc_lbl)
+        port_rl.addLayout(port_col)
+        port_rl.addStretch()
+
+        _show_opts   = ["Primary only", "Secondary only", "Both", "Neither"]
+        _show_vals   = ["primary", "secondary", "both", "none"]
+        _filter_opts = ["Non-standard", "All"]
+        _filter_vals = ["nonstandard", "all"]
+
+        cur_show        = database.get_setting("card_port_show")
+        cur_filter      = database.get_setting("card_port_filter")
+        cur_filter_web  = database.get_setting("card_port_filter_web")
+        show_idx        = _show_vals.index(cur_show)         if cur_show        in _show_vals   else 0
+        filter_idx      = _filter_vals.index(cur_filter)    if cur_filter      in _filter_vals else 0
+        filter_web_idx  = _filter_vals.index(cur_filter_web) if cur_filter_web in _filter_vals else 1  # default "all"
+
+        self._port_show_combo = QComboBox()
+        self._port_show_combo.addItems(_show_opts)
+        self._port_show_combo.setCurrentIndex(show_idx)
+        self._port_show_combo.setFixedWidth(130)
+        port_rl.addWidget(self._port_show_combo)
+
+        self._port_for_lbl = QLabel("  SSH/RDP:")
+        self._port_for_lbl.setStyleSheet("background: transparent; color: #aaa;")
+        port_rl.addWidget(self._port_for_lbl)
+
+        self._port_filter_combo = QComboBox()
+        self._port_filter_combo.addItems(_filter_opts)
+        self._port_filter_combo.setCurrentIndex(filter_idx)
+        self._port_filter_combo.setFixedWidth(115)
+        port_rl.addWidget(self._port_filter_combo)
+
+        self._port_for_web_lbl = QLabel("  WEB:")
+        self._port_for_web_lbl.setStyleSheet("background: transparent; color: #aaa;")
+        port_rl.addWidget(self._port_for_web_lbl)
+
+        self._port_filter_web_combo = QComboBox()
+        self._port_filter_web_combo.addItems(_filter_opts)
+        self._port_filter_web_combo.setCurrentIndex(filter_web_idx)
+        self._port_filter_web_combo.setFixedWidth(115)
+        port_rl.addWidget(self._port_filter_web_combo)
+
+        # Hide filter combos when "Neither" is selected
+        _port_filter_visible = cur_show != "none"
+        self._port_for_lbl.setVisible(_port_filter_visible)
+        self._port_filter_combo.setVisible(_port_filter_visible)
+        self._port_for_web_lbl.setVisible(_port_filter_visible)
+        self._port_filter_web_combo.setVisible(_port_filter_visible)
+
+        self._port_show_vals   = _show_vals
+        self._port_filter_vals = _filter_vals
+
+        def _on_port_show_changed(idx: int) -> None:
+            val = _show_vals[idx]
+            database.set_setting("card_port_show", val)
+            visible = val != "none"
+            self._port_for_lbl.setVisible(visible)
+            self._port_filter_combo.setVisible(visible)
+            self._port_for_web_lbl.setVisible(visible)
+            self._port_filter_web_combo.setVisible(visible)
+            self._on_settings_changed()
+
+        def _on_port_filter_changed(idx: int) -> None:
+            database.set_setting("card_port_filter", _filter_vals[idx])
+            self._on_settings_changed()
+
+        def _on_port_filter_web_changed(idx: int) -> None:
+            database.set_setting("card_port_filter_web", _filter_vals[idx])
+            self._on_settings_changed()
+
+        self._port_show_combo.currentIndexChanged.connect(_on_port_show_changed)
+        self._port_filter_combo.currentIndexChanged.connect(_on_port_filter_changed)
+        self._port_filter_web_combo.currentIndexChanged.connect(_on_port_filter_web_changed)
+        gen_layout.addWidget(port_row_frame)
+
         snap_on = database.get_setting("screenshot_enabled") != "0"
 
         # Screenshots group — single rounded card containing toggle + interval
@@ -1214,6 +2270,55 @@ class SettingsPage(QWidget):
         snap_vl.addWidget(self._interval_row)
 
         gen_layout.addWidget(snap_group)
+
+        # ── Web browser path ──────────────────────────────────────────────
+        browser_group = QFrame()
+        browser_group.setObjectName("user_row")
+        browser_group.setAttribute(Qt.WA_StyledBackground, True)
+        browser_vl = QVBoxLayout(browser_group)
+        browser_vl.setContentsMargins(0, 0, 0, 0)
+        browser_vl.setSpacing(0)
+
+        browser_top = QWidget()
+        browser_top.setAttribute(Qt.WA_TranslucentBackground)
+        browser_top_l = QHBoxLayout(browser_top)
+        browser_top_l.setContentsMargins(12, 8, 12, 8)
+        browser_top_l.setSpacing(8)
+        browser_col = QVBoxLayout()
+        browser_col.setSpacing(2)
+        browser_title_lbl = QLabel("Web Browser")
+        browser_title_lbl.setStyleSheet("font-weight: bold; background: transparent;")
+        browser_col.addWidget(browser_title_lbl)
+        browser_desc_lbl = QLabel("Custom browser executable for web hosts (empty = system default)")
+        browser_desc_lbl.setStyleSheet("color: #888; font-size: 11px; background: transparent;")
+        browser_col.addWidget(browser_desc_lbl)
+        browser_top_l.addLayout(browser_col)
+        browser_vl.addWidget(browser_top)
+
+        browser_sep = QFrame()
+        browser_sep.setFrameShape(QFrame.HLine)
+        browser_sep.setStyleSheet("background: #3a3a3a; max-height: 1px; border: none;")
+        browser_vl.addWidget(browser_sep)
+
+        browser_path_row = QWidget()
+        browser_path_row.setStyleSheet("background: transparent;")
+        bpr_l = QHBoxLayout(browser_path_row)
+        bpr_l.setContentsMargins(12, 8, 12, 8)
+        bpr_l.setSpacing(8)
+        self._browser_path_edit = QLineEdit()
+        self._browser_path_edit.setPlaceholderText(
+            r"e.g. C:\Program Files\Google\Chrome\Application\chrome.exe"
+        )
+        self._browser_path_edit.setText(database.get_setting("web_browser_path"))
+        self._browser_path_edit.editingFinished.connect(self._on_browser_path_changed)
+        bpr_l.addWidget(self._browser_path_edit)
+        btn_browse_browser = QPushButton("Browse…")
+        btn_browse_browser.setFixedWidth(70)
+        btn_browse_browser.clicked.connect(self._browse_browser_path)
+        bpr_l.addWidget(btn_browse_browser)
+        browser_vl.addWidget(browser_path_row)
+
+        gen_layout.addWidget(browser_group)
 
         gen_layout.addStretch()
         self._tabs.addTab(general_page, "General")
@@ -1369,6 +2474,15 @@ class SettingsPage(QWidget):
         self._protocol_badge_toggle.setText("ON" if checked else "OFF")
         self._on_settings_changed()
 
+    def _on_nslookup_changed(self, checked: bool) -> None:
+        database.set_setting("nslookup_on_hostname", "1" if checked else "0")
+        self._nslookup_toggle.setText("ON" if checked else "OFF")
+
+    def _on_secondary_changed(self, checked: bool) -> None:
+        database.set_setting("show_secondary_on_card", "1" if checked else "0")
+        self._secondary_toggle.setText("ON" if checked else "OFF")
+        self._on_settings_changed()
+
     def _on_screenshot_changed(self, checked: bool) -> None:
         database.set_setting("screenshot_enabled", "1" if checked else "0")
         self._snap_toggle.setText("ON" if checked else "OFF")
@@ -1381,6 +2495,18 @@ class SettingsPage(QWidget):
         if text.isdigit() and int(text) >= 5:
             database.set_setting("screenshot_interval", text)
             self._on_settings_changed()
+
+    def _on_browser_path_changed(self) -> None:
+        database.set_setting("web_browser_path", self._browser_path_edit.text().strip())
+
+    def _browse_browser_path(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Select Browser Executable", "",
+            "Executables (*.exe);;All Files (*)"
+        )
+        if path:
+            self._browser_path_edit.setText(path)
+            database.set_setting("web_browser_path", path)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1418,8 +2544,7 @@ class App(QMainWindow):
         )
         self._stack.addWidget(self._overview_page)
         self._stack.addWidget(self._settings_page)
-
-        self._show_overview()
+        self._stack.setCurrentWidget(self._overview_page)  # just switch page; _apply_general_settings() below loads cards
 
         self._proc_timer = QTimer(self)
         self._proc_timer.timeout.connect(self._check_processes)
@@ -1682,17 +2807,19 @@ class App(QMainWindow):
             r for r in rows
             if query in r["name"].lower()
             or query in r["host"].lower()
+            or query in (r["host_ip"] or "").lower()
             or query in r["type"].lower()
         ]
 
         for card in self._cards.values():
-            card.setParent(None)
+            card.hide()
             card.deleteLater()
         self._cards.clear()
 
         new_cards: list[HostCard] = []
         for rec in filtered:
-            card = HostCard(rec, self._on_card_left, self._on_card_right)
+            card = HostCard(rec, self._on_card_left, self._on_card_right,
+                            parent=self._card_grid)
             self._cards[rec["id"]] = card
             card.set_online(self._ping_cache.get(rec["id"]))
             card.set_active_count(self._active_window_count(rec["id"]))
@@ -1713,7 +2840,10 @@ class App(QMainWindow):
     # ── Ping ──────────────────────────────────────────────────────────────
     def _ping_all(self) -> None:
         for cid, card in self._cards.items():
-            self._ping_host(cid, card.record["host"])
+            rec = card.record
+            host = rec["host"] or rec["host_ip"]
+            if host:
+                self._ping_host(cid, host)
 
     def _ping_host(self, cid: int, host: str) -> None:
         def _work():
@@ -1912,6 +3042,9 @@ class App(QMainWindow):
         return alive_popen_count + reattached_count
 
     def _on_card_left(self, record) -> None:
+        if record["type"] == "WEB":
+            self._open_web_url(record)
+            return
         cid = record["id"]
         if cid in self._connecting_cids:
             return  # already connecting — ignore click
@@ -1928,35 +3061,61 @@ class App(QMainWindow):
             self._connect(record)
 
     def _on_card_right(self, record, pos: QPoint) -> None:
-        cid = record["id"]
-        n = self._active_window_count(cid)
         menu = QMenu(self)
-        if n > 0:
-            wlabel = "window" if n == 1 else "windows"
-            act = QAction(_load_icon("locate-svgrepo"), f"Locate {wlabel}", menu)
-            act.triggered.connect(lambda: self._locate_windows(record))
-            menu.addAction(act)
+        if record["type"] == "WEB":
+            host = record["host"]
+            host_ip = record["host_ip"]
+            if host and host_ip:
+                prefer_ip = record["host_prefer"] == "ip"
+                # Default action first (matches what left-click does)
+                if prefer_ip:
+                    act = QAction(_load_icon("globe-svgrepo"), "Open with IP", menu)
+                    act.triggered.connect(lambda: self._open_web_url(record, use="ip"))
+                    menu.addAction(act)
+                    act = QAction(_load_icon("globe-svgrepo"), "Open with Hostname", menu)
+                    act.triggered.connect(lambda: self._open_web_url(record, use="hostname"))
+                    menu.addAction(act)
+                else:
+                    act = QAction(_load_icon("globe-svgrepo"), "Open with Hostname", menu)
+                    act.triggered.connect(lambda: self._open_web_url(record, use="hostname"))
+                    menu.addAction(act)
+                    act = QAction(_load_icon("globe-svgrepo"), "Open with IP", menu)
+                    act.triggered.connect(lambda: self._open_web_url(record, use="ip"))
+                    menu.addAction(act)
+            else:
+                act = QAction(_load_icon("globe-svgrepo"), "Open", menu)
+                act.triggered.connect(lambda: self._open_web_url(record))
+                menu.addAction(act)
+            menu.addSeparator()
+        else:
+            cid = record["id"]
+            n = self._active_window_count(cid)
+            if n > 0:
+                wlabel = "window" if n == 1 else "windows"
+                act = QAction(_load_icon("locate-svgrepo"), f"Locate {wlabel}", menu)
+                act.triggered.connect(lambda: self._locate_windows(record))
+                menu.addAction(act)
 
-            act = QAction(_load_icon("move-here-svgrepo"), "Move to this monitor", menu)
-            act.triggered.connect(lambda: self._move_windows(record))
-            menu.addAction(act)
+                act = QAction(_load_icon("move-here-svgrepo"), "Move to this monitor", menu)
+                act.triggered.connect(lambda: self._move_windows(record))
+                menu.addAction(act)
+
+                menu.addSeparator()
+
+                act = QAction(_load_icon("new-window-svgrepo"), "Start additional connection", menu)
+                act.triggered.connect(lambda: self._connect(record))
+                menu.addAction(act)
+
+                clabel = "Close connection" if n == 1 else "Close all connections"
+                act = QAction(_load_icon("close-svgrepo"), clabel, menu)
+                act.triggered.connect(lambda: self._close_all(record))
+                menu.addAction(act)
+            else:
+                act = QAction(_load_icon("paperplane-svgrepo"), "Connect", menu)
+                act.triggered.connect(lambda: self._connect(record))
+                menu.addAction(act)
 
             menu.addSeparator()
-
-            act = QAction(_load_icon("new-window-svgrepo"), "Start additional connection", menu)
-            act.triggered.connect(lambda: self._connect(record))
-            menu.addAction(act)
-
-            clabel = "Close connection" if n == 1 else "Close all connections"
-            act = QAction(_load_icon("close-svgrepo"), clabel, menu)
-            act.triggered.connect(lambda: self._close_all(record))
-            menu.addAction(act)
-        else:
-            act = QAction(_load_icon("paperplane-svgrepo"), "Connect", menu)
-            act.triggered.connect(lambda: self._connect(record))
-            menu.addAction(act)
-
-        menu.addSeparator()
 
         act = QAction(_load_icon("edit-svgrepo"), "Edit", menu)
         act.triggered.connect(lambda: self._edit_host(record))
@@ -2056,16 +3215,22 @@ class App(QMainWindow):
         self._launch_counter += 1
         tag = f"Remote-Routes-{cid}-{self._launch_counter}" if record["type"] == "SSH" else ""
         host = record["host"]
+        host_ip = record["host_ip"]
+        host_prefer = record["host_prefer"]
+        if host and host_ip:
+            effective_host = conn_launcher.resolve_host(host, host_ip, host_prefer, record["port"])
+        else:
+            effective_host = host or host_ip
         # Accumulate title hints so older windows can still be found.
         existing = self._snap_tags.get(cid, [])
-        for h in (tag, host):
+        for h in (tag, host, effective_host):
             if h and h not in existing:
                 existing.append(h)
         if existing:
             self._snap_tags[cid] = existing
         try:
             proc = conn_launcher.launch(
-                record["type"], record["host"], record["port"], username,
+                record["type"], effective_host, record["port"], username,
                 title_tag=tag or None,
             )
             self._procs.setdefault(cid, []).append(proc)
@@ -2111,10 +3276,53 @@ class App(QMainWindow):
             self._refresh_cards()
 
     def _delete_host(self, record) -> None:
+        name = record["name"] or record["host"] or record["host_ip"] or "Host"
         reply = QMessageBox.question(
-            self, "Confirm", f"Delete '{record['name']}'?",
+            self, "Confirm", f"Delete '{name}'?",
             QMessageBox.Yes | QMessageBox.No,
         )
         if reply == QMessageBox.Yes:
             database.delete_connection(record["id"])
             self._refresh_cards()
+
+    def _open_web_url(self, record, use: str = "") -> None:
+        """Build the URL and open it in the configured browser."""
+        scheme = record["scheme"] or "https"
+        port = record["port"]
+        host = record["host"]
+        host_ip = record["host_ip"]
+        if use == "hostname":
+            addr = host
+            effective_scheme = scheme
+            effective_port = port
+        elif use == "ip":
+            addr = host_ip
+            effective_scheme = record["host_ip_scheme"] or scheme
+            ip_port = record["host_ip_port"]
+            effective_port = ip_port if ip_port else port
+        else:
+            prefer = record["host_prefer"]
+            if prefer == "ip" and host_ip:
+                addr = host_ip
+                effective_scheme = record["host_ip_scheme"] or scheme
+                ip_port = record["host_ip_port"]
+                effective_port = ip_port if ip_port else port
+            else:
+                addr = host or host_ip
+                effective_scheme = scheme
+                effective_port = port
+        if not addr:
+            return
+        # Split off any path component stored in the address (e.g. "10.0.0.1/dashboard/")
+        if "/" in addr:
+            addr_host, addr_path = addr.split("/", 1)
+            addr_path = "/" + addr_path
+        else:
+            addr_host, addr_path = addr, ""
+        default_port = 443 if effective_scheme == "https" else 80
+        if effective_port != default_port:
+            url = f"{effective_scheme}://{addr_host}:{effective_port}{addr_path}"
+        else:
+            url = f"{effective_scheme}://{addr_host}{addr_path}"
+        browser_path = database.get_setting("web_browser_path")
+        conn_launcher.launch_web(url, browser_path)

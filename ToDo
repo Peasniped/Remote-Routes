@@ -1,17 +1,17 @@
 !! Propper attributions for icons from svgrepo.com used in the app, ahead of moving repo to public access.
 
-Remote Hosts:
-- Add functionality when creating a host to write the hostname and/or the IP, and select which to prefer (only if both are filled). (It will use this as failover, eg if DNS is down, it will failover to use the Host IP)
 
-Add Web Hosts (shortcuts to services/admin pages etc.)
-- choose between http/https and port for each remote host
-- no support for credentials, this is too hard, and the user should really be using a propper pwmanager in their browser.
-- Research possibility to track open tabs for the connection in the same way terminal windows are tracked, and show a badge with the number of open tabs for that host.
+
 
 Ping-dot
 - Rename to StatusDot
 - Add hover-over text to the status-dot (Online/Unreachable)
 - Add a status for "warning" showing if the host is online but has a slow ping response (maybe >100ms?), or if one of the connection methods (dns/ip) is unreachable but the other is online.
+- In host creation, add a port checker that checks if the port is open on the remote host.
+- Add an orange dot if the failover is used (ex if hostname is primary and unreachable but IP is ok, or if the port is closed but the IP/host is reachable)
+- Add option to disable ping feature - also disables ping in host creation/edit
+- Add support for paths in IP/domains for web hosts. 
+
 
 Add Error handling and show error message popup
 - Ex ssh: connect to host 10.50.26.58 port 22: Connection refused
@@ -30,37 +30,47 @@ UI/UX improvements
 - Add Copy to right click menu allowing the user to easily copy IP/Hostname/Username/password(if configured, if blank, the copy is greyed out and 'Password (not set)' is displayed)
 - Remember and persist window size through sessions.
 - Make the settings page prettier and more modern.
+- When right clicking on a host, everything but the host and the right click menu should fade.
+- 'Bring to front' button should bring all windows to front (if multiple sessions are open), not just the latest.
+- Right clicking on nothing on the dashboard gives the option to create a new host.
+- The settings page needs a scrollbar. The bottom settings are mushed together.
 
 Add Remote Routes branding/logo to the top/left
 
-Add a version/versiondate either to the bottom/left or to the settings page
+Add a version + versiondate either to the bottom/left or to the settings page
 - Also to the db. -- in the future, add functionality to migrate database to new version.
 
 custom background images for hosts.
 - maybe possible to pick from a few pre-defined ones, or even upload your own? (maybe able to pull from some API?)
+- - accessed with an easel and brush icon
+- - add a preview of the hostcard when adding a new host
 - Settings: controlling screenshot behaviour if custom backgrounds are enabled (when to show screenshots and when to show the custom background instead -- ie show screenshots for active connections, but show custom background for inactive ones)
 
 Color scheme:
 - Implement a homogenous color scheme for the app.
 - Implement light theme and a toggle in the settings.
 - Completely configurable color scheme for both light/dark theme
-- - Colors are listed next to each other, can be changed with a color picker or by hex/rgb/hsv
+- - All colors are listed in a table together, they can be changed with a color picker or by hex/rgb/hsv
 
 Host grouping: Can create/rename/remove host groups and assign hosts one group.
 - Function can be enabled/disabled in the settings
 - Hosts that are not assigned to a group are in the invisible (no title visible) ungrouped-group.
 - Groups can be collapsed and will show (3 active, 2 online, 5 unavailable) (can be disabled)
-
-Reordering of hosts and groups with simple drag and drop
-- groups can be dragged over/under the ungrouped-group, and will retain their place.
+- Right click on nothing on the dashboard and get the option to add a new group
+- Reordering of hosts and groups with simple drag and drop
+- - groups can be dragged over/under the ungrouped-group, and will retain their place.
 
 How are passwords stored? -- are they safe?
 
 Code restructure
 - Split up the app file as it is 2000+ lines.
-- - ui module/folder where each class is its own file?
+- - ui module/folder where each class is its own file for better readability?
+- Implement OOP where it makes sense
 
 ## Maybe later
 - Add host to multiple host groups -- does it make sense?
-- Some way of combining multiple protocols for the same remote host, ex, if you want to SSH and RDP into the same host, but not have a bunch of hostcards cluttering up the list. 
+- Some way of combining multiple protocols for the same remote host, ex, if you want to SSH and RDP into the same host, but not have a bunch of hostcards cluttering up the list. -- what would be the better solution here?
+- Fix flickering of windows right before startup. It's like a few tiny windows with no content (only header bar with minimize, maximize, exit buttons) are shown for a very short moment before ultimately the main dashboard is displayed and the app is ready.
+- - It also comes up when i use the search function (like for every letter IF there is a result. If there are no results, i can type as much as I want and nothing apears.)
+- - It must have something to do with either the hostcard or the database.
 

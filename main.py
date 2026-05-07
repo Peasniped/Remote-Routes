@@ -10,6 +10,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "src"))
 
 from PySide6.QtWidgets import QApplication
 from PySide6.QtGui import QFont, QIcon
+from PySide6.QtCore import QTimer
 
 from app import App, APP_QSS, _dark_palette
 
@@ -35,5 +36,7 @@ if __name__ == "__main__":
     _icon_path = os.path.join(os.path.dirname(__file__), "static", "logo.ico")
     qt_app.setWindowIcon(QIcon(_icon_path))
     window = App()
-    window.show()
+    # Defer show() to the next event-loop tick so all widget construction
+    # and layout is complete before the OS renders the window frame.
+    QTimer.singleShot(0, window.show)
     sys.exit(qt_app.exec())

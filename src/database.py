@@ -44,15 +44,20 @@ def init_db() -> None:
         # ── connections table ─────────────────────────────────────────────
         conn.execute("""
             CREATE TABLE IF NOT EXISTS connections (
-                id       INTEGER PRIMARY KEY AUTOINCREMENT,
-                name     TEXT    NOT NULL,
-                type     TEXT    NOT NULL CHECK(type IN ('SSH', 'RDP')),
-                host     TEXT    NOT NULL,
-                port     INTEGER NOT NULL,
-                username TEXT    NOT NULL DEFAULT '',
-                password TEXT    NOT NULL DEFAULT '',
-                notes    TEXT    NOT NULL DEFAULT '',
-                user_id  INTEGER REFERENCES users(id) ON DELETE SET NULL
+                id             INTEGER PRIMARY KEY AUTOINCREMENT,
+                name           TEXT    NOT NULL DEFAULT '',
+                type           TEXT    NOT NULL,
+                host           TEXT    NOT NULL DEFAULT '',
+                host_ip        TEXT    NOT NULL DEFAULT '',
+                host_prefer    TEXT    NOT NULL DEFAULT 'hostname',
+                port           INTEGER NOT NULL,
+                scheme         TEXT    NOT NULL DEFAULT '',
+                host_ip_scheme TEXT    NOT NULL DEFAULT '',
+                host_ip_port   INTEGER NOT NULL DEFAULT 0,
+                username       TEXT    NOT NULL DEFAULT '',
+                password       TEXT    NOT NULL DEFAULT '',
+                notes          TEXT    NOT NULL DEFAULT '',
+                user_id        INTEGER REFERENCES users(id) ON DELETE SET NULL
             )
         """)
 
@@ -68,7 +73,56 @@ def init_db() -> None:
             conn.execute(
                 "ALTER TABLE connections ADD COLUMN screenshot BLOB"
             )
+        # ── migration: add scheme for WEB hosts ───────────────────────────
+        if not _column_exists(conn, "connections", "scheme"):
+            conn.execute(
+                "ALTER TABLE connections ADD COLUMN scheme TEXT NOT NULL DEFAULT ''"
+            )
 
+        # ── migration: add per-IP scheme + port for WEB hosts ─────────────
+        if not _column_exists(conn, "connections", "host_ip_scheme"):
+            conn.execute(
+                "ALTER TABLE connections ADD COLUMN host_ip_scheme TEXT NOT NULL DEFAULT ''"
+            )
+        if not _column_exists(conn, "connections", "host_ip_port"):
+            conn.execute(
+                "ALTER TABLE connections ADD COLUMN host_ip_port INTEGER NOT NULL DEFAULT 0"
+            )
+
+        # ── migration: drop old SSH/RDP-only CHECK constraint ─────────────
+        # SQLite can't ALTER a constraint; we must rebuild the table.
+        row = conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='connections'"
+        ).fetchone()
+        if row and row[0] and "CHECK(type IN ('SSH', 'RDP'))" in row[0]:
+            conn.execute("""
+                CREATE TABLE connections_new (
+                    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name        TEXT    NOT NULL DEFAULT '',
+                    type        TEXT    NOT NULL,
+                    host        TEXT    NOT NULL DEFAULT '',
+                    host_ip     TEXT    NOT NULL DEFAULT '',
+                    host_prefer TEXT    NOT NULL DEFAULT 'hostname',
+                    port        INTEGER NOT NULL,
+                    scheme      TEXT    NOT NULL DEFAULT '',
+                    username    TEXT    NOT NULL DEFAULT '',
+                    password    TEXT    NOT NULL DEFAULT '',
+                    notes       TEXT    NOT NULL DEFAULT '',
+                    user_id     INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                    screenshot  BLOB
+                )
+            """)
+            conn.execute("""
+                INSERT INTO connections_new
+                    (id, name, type, host, host_ip, host_prefer, port,
+                     scheme, username, password, notes, user_id, screenshot)
+                SELECT
+                    id, name, type, host, host_ip, host_prefer, port,
+                    COALESCE(scheme, ''), username, password, notes, user_id, screenshot
+                FROM connections
+            """)
+            conn.execute("DROP TABLE connections")
+            conn.execute("ALTER TABLE connections_new RENAME TO connections")
         # ── settings table (key-value) ────────────────────────────────────
         conn.execute("""
             CREATE TABLE IF NOT EXISTS settings (
@@ -152,8 +206,13 @@ def get_connection_by_id(conn_id: int) -> Optional[sqlite3.Row]:
 def add_connection(
     name: str,
     type: str,
-    host: str,
-    port: int,
+    host: str = "",
+    host_ip: str = "",
+    host_prefer: str = "hostname",
+    port: int = 22,
+    scheme: str = "",
+    host_ip_scheme: str = "",
+    host_ip_port: int = 0,
     username: str = "",
     password: str = "",
     notes: str = "",
@@ -162,9 +221,11 @@ def add_connection(
     with _get_conn() as conn:
         cur = conn.execute(
             "INSERT INTO connections"
-            " (name, type, host, port, username, password, notes, user_id)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (name, type, host, port, username, password, notes, user_id),
+            " (name, type, host, host_ip, host_prefer, port, scheme,"
+            "  host_ip_scheme, host_ip_port, username, password, notes, user_id)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (name, type, host, host_ip, host_prefer, port, scheme,
+             host_ip_scheme, host_ip_port, username, password, notes, user_id),
         )
         conn.commit()
         return cur.lastrowid
@@ -174,8 +235,13 @@ def update_connection(
     conn_id: int,
     name: str,
     type: str,
-    host: str,
-    port: int,
+    host: str = "",
+    host_ip: str = "",
+    host_prefer: str = "hostname",
+    port: int = 22,
+    scheme: str = "",
+    host_ip_scheme: str = "",
+    host_ip_port: int = 0,
     username: str = "",
     password: str = "",
     notes: str = "",
@@ -183,9 +249,11 @@ def update_connection(
 ) -> None:
     with _get_conn() as conn:
         conn.execute(
-            "UPDATE connections SET name=?, type=?, host=?, port=?,"
+            "UPDATE connections SET name=?, type=?, host=?, host_ip=?, host_prefer=?,"
+            " port=?, scheme=?, host_ip_scheme=?, host_ip_port=?,"
             " username=?, password=?, notes=?, user_id=? WHERE id=?",
-            (name, type, host, port, username, password, notes, user_id, conn_id),
+            (name, type, host, host_ip, host_prefer, port, scheme,
+             host_ip_scheme, host_ip_port, username, password, notes, user_id, conn_id),
         )
         conn.commit()
 
@@ -232,10 +300,16 @@ def get_screenshot(conn_id: int) -> Optional[bytes]:
 # ─── Settings ─────────────────────────────────────────────────────────────────
 
 _SETTING_DEFAULTS: dict[str, str] = {
-    "show_search_bar":      "1",
-    "screenshot_enabled":   "1",
-    "screenshot_interval":  "30",
-    "show_protocol_badge":  "1",
+    "show_search_bar":          "1",
+    "screenshot_enabled":       "1",
+    "screenshot_interval":      "30",
+    "show_protocol_badge":      "1",
+    "nslookup_on_hostname":     "1",
+    "show_secondary_on_card":   "0",
+    "card_port_show":           "primary",   # primary | secondary | both | none
+    "card_port_filter":         "nonstandard",  # nonstandard | all  (SSH/RDP)
+    "card_port_filter_web":     "all",          # nonstandard | all  (WEB)
+    "web_browser_path":         "",
 }
 
 

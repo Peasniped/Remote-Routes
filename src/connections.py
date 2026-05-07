@@ -1,7 +1,9 @@
 """Connection launchers for SSH and RDP."""
 
 import logging
+import os
 import shutil
+import socket
 import subprocess
 import sys
 from typing import Optional
@@ -113,6 +115,32 @@ def launch_rdp(host: str, port: int, username: str) -> subprocess.Popen:
     )
 
 
+def resolve_host(hostname: str, ip: str, prefer: str, port: int, timeout: float = 1.0) -> str:
+    """Return the address to connect to, with failover.
+
+    Probes the preferred address via TCP connect on *port*.  If unreachable
+    within *timeout* seconds, the other address is returned instead.
+    """
+    primary  = ip if prefer == "ip" else hostname
+    fallback = hostname if prefer == "ip" else ip
+
+    if not primary:
+        return fallback or hostname
+    if not fallback:
+        return primary
+
+    try:
+        with socket.create_connection((primary, port), timeout=timeout):
+            pass
+        return primary
+    except OSError:
+        log.debug(
+            "resolve_host: %r unreachable on port %d, failing over to %r",
+            primary, port, fallback,
+        )
+        return fallback
+
+
 def launch(
     conn_type: str, host: str, port: int, username: str,
     title_tag: str | None = None,
@@ -124,6 +152,15 @@ def launch(
         return launch_rdp(host, port, username)
     else:
         raise ValueError(f"Unknown connection type: {conn_type}")
+
+
+def launch_web(url: str, browser_path: str = "") -> None:
+    """Open *url* in the configured browser or the OS default."""
+    if browser_path and os.path.isfile(browser_path):
+        subprocess.Popen([browser_path, url])
+    else:
+        import webbrowser
+        webbrowser.open(url)
 
 
 # ── Window management (Windows only) ─────────────────────────────────────────
