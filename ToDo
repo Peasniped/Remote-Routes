@@ -1,6 +1,6 @@
 !! Propper attributions for icons from svgrepo.com used in the app, ahead of moving repo to public access.
 
-
+Bug: If I rightclick one remote host, then rightclick another remote host, the context menu content changes (as it should), but the position is not updated.
 
 
 Ping-dot
