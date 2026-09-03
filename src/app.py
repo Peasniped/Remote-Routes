@@ -240,6 +240,33 @@ class ProtocolBadge(QWidget):
 
 
 # ── Dark palette ──────────────────────────────────────────────────────────────
+def _split_addr(addr: str) -> tuple[str, str]:
+    """Split a stored address into (host, path).
+
+    WEB hosts may carry a path in the address field, e.g.
+    "traefik.example.com/dashboard/". Opening the URL needs the path back,
+    while ping and DNS need the bare host — passing the whole string to
+    ping makes it fail to resolve and shows the host as offline.
+
+    A scheme or trailing ":port" that got pasted into the field is stripped
+    too; both are stored in their own columns.
+    """
+    s = (addr or "").strip()
+    if "://" in s:
+        s = s.split("://", 1)[1]
+    host, path = s, ""
+    cut = [s.index(c) for c in "/?#" if c in s]
+    if cut:
+        i = min(cut)
+        host, path = s[:i], s[i:]
+    # Strip a trailing :port, leaving IPv6 literals like [::1] alone
+    if not host.startswith("[") and host.count(":") == 1:
+        h, _, port = host.partition(":")
+        if port.isdigit():
+            host = h
+    return host, path
+
+
 def _dark_palette() -> QPalette:
     p = QPalette()
     dark   = QColor("#1e1e1e")
@@ -1217,6 +1244,9 @@ class ConnectionDialog(QDialog):
         if not self._btn_web.isChecked() and database.get_setting("nslookup_on_hostname") == "0":
             return
         self._dns_pending_host = hostname
+        lookup_host, _ = _split_addr(hostname)
+        if not lookup_host:
+            return
         h = self._host.height()
         sw = self._dns_spinner.width()
         self._dns_spinner.move(self._host.width() - sw - 8, (h - self._dns_spinner.height()) // 2)
@@ -1228,7 +1258,7 @@ class ConnectionDialog(QDialog):
         def _work() -> None:
             import socket as _socket
             try:
-                results = _socket.getaddrinfo(hostname, None, _socket.AF_INET)
+                results = _socket.getaddrinfo(lookup_host, None, _socket.AF_INET)
                 ip = results[0][4][0] if results else ""
             except Exception:
                 ip = ""
@@ -1363,6 +1393,9 @@ class ConnectionDialog(QDialog):
         if not hostname:
             return
         self._host_last_pinged = hostname
+        ping_host, _ = _split_addr(hostname)
+        if not ping_host:
+            return
         self._host_ping_anim_frame = 0
         h = self._host.height()
         sw = self._host_ping_lbl.width()
@@ -1376,10 +1409,10 @@ class ConnectionDialog(QDialog):
         def _work() -> None:
             try:
                 if sys.platform == "win32":
-                    cmd = ["ping", "-n", "1", "-w", "1500", hostname]
+                    cmd = ["ping", "-n", "1", "-w", "1500", ping_host]
                     kw: dict = {"creationflags": subprocess.CREATE_NO_WINDOW}
                 else:
-                    cmd = ["ping", "-c", "1", "-W", "2", hostname]
+                    cmd = ["ping", "-c", "1", "-W", "2", ping_host]
                     kw = {}
                 r = subprocess.run(cmd, capture_output=True, **kw)
                 online = r.returncode == 0
@@ -2850,7 +2883,7 @@ class App(QMainWindow):
     def _ping_all(self) -> None:
         for cid, card in self._cards.items():
             rec = card.record
-            host = rec["host"] or rec["host_ip"]
+            host, _ = _split_addr(rec["host"] or rec["host_ip"])
             if host:
                 self._ping_host(cid, host)
 
@@ -3335,11 +3368,7 @@ class App(QMainWindow):
         if not addr:
             return
         # Split off any path component stored in the address (e.g. "10.0.0.1/dashboard/")
-        if "/" in addr:
-            addr_host, addr_path = addr.split("/", 1)
-            addr_path = "/" + addr_path
-        else:
-            addr_host, addr_path = addr, ""
+        addr_host, addr_path = _split_addr(addr)
         default_port = 443 if effective_scheme == "https" else 80
         if effective_port != default_port:
             url = f"{effective_scheme}://{addr_host}:{effective_port}{addr_path}"

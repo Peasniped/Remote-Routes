@@ -15,9 +15,12 @@ Fix: context menu position when right-clicking a second host
   from a blocking exec() to a non-blocking popup().
 - (Positioning already confirmed working by developer.)
 
-# AWAITING IMPLEMENTATION   --------------------------------------------------------
+Change: new-window icon swapped for plus-square-on-square-svgrepo-com.svg
+- Right-click a host that HAS an active connection -> "Start additional connection"
+  should show the new icon. Old new-window-svgrepo.svg was deleted.
 
-
+Docs: ATTRIBUTIONS.md added and linked from README
+- Skim it -- especially the logo section and the CC BY / GPL notes -- for anything wrong.
 
 Fix: Edit connection button crashed with
 AttributeError: 'ConnectionDialog' object has no attribute '_btn_lookup_ip'
@@ -31,36 +34,38 @@ AttributeError: 'ConnectionDialog' object has no attribute '_btn_lookup_ip'
   _btn_lookup_ip and the ping widgets/timers below it existed. Moved pre-populate to
   after widget creation, still before signal wiring.
 
-Change: new-window icon swapped for plus-square-on-square-svgrepo-com.svg
-- Right-click a host that HAS an active connection -> "Start additional connection"
-  should show the new icon. Old new-window-svgrepo.svg was deleted.
+Fix: WEB host with a path in its address showed a red status dot
+- The Traefik host (traefik.int.neujkfnordic.com/dashboard/) should now show a green
+  dot. Ping used the whole string including the path, which cannot resolve.
+- Check the other WEB hosts (Portainer, Proxmox VE) still show the right dot and still
+  open the same URL as before.
+- In Add/Edit host, type an address with a path into the Address field: the inline ping
+  dot and the DNS lookup should now work off the bare hostname.
+- Only the ping/DNS path changed; URL building already stripped the path correctly.
 
-Docs: ATTRIBUTIONS.md added and linked from README
-- Skim it -- especially the logo section and the CC BY / GPL notes -- for anything wrong.
+# AWAITING IMPLEMENTATION   --------------------------------------------------------
+
+## Make the program close cleanly on keyboard interrupt in the console
 
 
-!! Propper attributions for icons from svgrepo.com used in the app, ahead of moving repo to public access.
-- Fill in collection/author/license for plus-square-on-square-svgrepo-com.svg in ATTRIBUTIONS.md -- the last unattributed icon. Assumed to be https://www.svgrepo.com/svg/437159/plus-square-on-square but unconfirmed.
-- paperplane (Font Awesome) is CC BY: credit must reach the END USER, so ATTRIBUTIONS.md (or an in-app About/Credits view) has to ship with the distributed exe -- ties into the distribution item below.
-- settings2 icon is GPL. Fine for this project, but it would block any future relicense to something permissive. Swapping that one icon would remove the constraint.
 
 
-Ping-dot
+## Ping-dot
 - Rename to StatusDot
 - Add hover-over text to the status-dot (Online/Unreachable)
 - Add a status for "warning" showing if the host is online but has a slow ping response (maybe >100ms?), or if one of the connection methods (dns/ip) is unreachable but the other is online.
 - In host creation, add a port checker that checks if the port is open on the remote host.
 - Add an orange dot if the failover is used (ex if hostname is primary and unreachable but IP is ok, or if the port is closed but the IP/host is reachable)
 - Add option to disable ping feature - also disables ping in host creation/edit
-- Add support for paths in IP/domains for web hosts.
+- Add support for paths in IP/domains for web hosts. (ping/DNS now strip the path; still to do: verify the path itself returns a valid response)
 - - maybe there should be a two-part ping, where it pings the raw host and then uses some other way to scan if the website path returns a valid response
 
 
-Add Error handling and show error message popup
+## Add Error handling and show error message popup
 - Ex ssh: connect to host 10.50.26.58 port 22: Connection refused
 - Ex incorrect password
 
-UI/UX improvements
+## UI/UX improvements
 - Make the search bar more pretty? Gradient tailwind CSS like?
 - Center the search bar text
 - Allow search for usernames
@@ -78,24 +83,24 @@ UI/UX improvements
 - Right clicking on nothing on the dashboard gives the option to create a new host.
 - The settings page needs a scrollbar. The bottom settings are mushed together.
 
-Add Remote Routes branding/logo to the top/left
+## Add Remote Routes branding/logo to the top/left
 
-Add a version + versiondate either to the bottom/left or to the settings page
+## Add a version + versiondate either to the bottom/left or to the settings page
 - Also to the db. -- in the future, add functionality to migrate database to new version.
 
-custom background images for hosts.
+## custom background images for hosts.
 - maybe possible to pick from a few pre-defined ones, or even upload your own? (maybe able to pull from some API?)
 - - accessed with an easel and brush icon
 - - add a preview of the hostcard when adding a new host
 - Settings: controlling screenshot behaviour if custom backgrounds are enabled (when to show screenshots and when to show the custom background instead -- ie show screenshots for active connections, but show custom background for inactive ones)
 
-Color scheme:
+## Color scheme:
 - Implement a homogenous color scheme for the app.
 - Implement light theme and a toggle in the settings.
 - Completely configurable color scheme for both light/dark theme
 - - All colors are listed in a table together, they can be changed with a color picker or by hex/rgb/hsv
 
-Host grouping: Can create/rename/remove host groups and assign hosts one group.
+## Host grouping: Can create/rename/remove host groups and assign hosts one group.
 - Function can be enabled/disabled in the settings
 - Hosts that are not assigned to a group are in the invisible (no title visible) ungrouped-group.
 - Groups can be collapsed and will show (3 active, 2 online, 5 unavailable) (can be disabled)
@@ -103,16 +108,7 @@ Host grouping: Can create/rename/remove host groups and assign hosts one group.
 - Reordering of hosts and groups with simple drag and drop
 - - groups can be dragged over/under the ungrouped-group, and will retain their place.
 
-How are passwords stored? -- are they safe?
-
-Code restructure
-- Split up the app file as it is 2000+ lines.
-- - ui module/folder where each class is its own file for better readability?
-- Implement OOP where it makes sense
-
-## Propper installation/distribution method
-- User downloads an exe or similar
-- Must ship ATTRIBUTIONS.md (or an in-app About/Credits view) with the artifact -- the Font Awesome paperplane icon is CC BY and its credit has to reach the end user, not just the repo.
+## How are passwords stored? -- are they safe?
 
 ## Maybe later
 - Add host to multiple host groups -- does it make sense?
@@ -129,3 +125,12 @@ Some way to sync the connection entries, maybe to a git repo.
 - Maybe omit the password field, and when a user imports a bunch of connections, it would ask for the password on the first connection, and ask if they want to save it to the local database.
 - - in other words, passwords are not synced.
 
+
+## Code restructure
+- Split up the app file as it is 2000+ lines.
+- - ui module/folder where each class is its own file for better readability?
+- Implement OOP where it makes sense
+
+## Propper installation/distribution method
+- User downloads an exe or similar
+- Must ship ATTRIBUTIONS.md (or an in-app About/Credits view) with the artifact -- the Font Awesome paperplane icon is CC BY and its credit has to reach the end user, not just the repo.
