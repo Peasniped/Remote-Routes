@@ -818,61 +818,6 @@ class ConnectionDialog(QDialog):
         btn_row.addWidget(btn_cancel)
         layout.addLayout(btn_row)
 
-        # Pre-populate
-        if record:
-            self._alias.setText(record["name"])
-            self._set_type(record["type"])
-            if record["host"]:
-                self._host.setText(record["host"])
-                self._add_host_field("hostname")
-            if record["host_ip"]:
-                self._host_ip.setText(record["host_ip"])
-                self._add_host_field("ip")
-            self._set_prefer(record["host_prefer"])
-            self._port.setText(str(record["port"]))
-            scheme = record["scheme"]
-            if scheme:
-                idx = self._scheme_combo.findText(scheme)
-                if idx >= 0:
-                    self._scheme_combo.setCurrentIndex(idx)
-            # Per-field scheme/port for WEB hosts
-            if record["type"] == "WEB":
-                # Hostname (address) opts
-                if record["host"]:
-                    hn_scheme = record["scheme"] or "https"
-                    idx = self._web_hn_scheme_combo.findText(hn_scheme)
-                    if idx >= 0:
-                        self._web_hn_scheme_combo.setCurrentIndex(idx)
-                    hn_port = record["port"]
-                    default_hn_port = 443 if hn_scheme == "https" else 80
-                    if hn_port != default_hn_port:
-                        self._web_hn_port.setText(str(hn_port))
-                # IP opts
-                if record["host_ip"]:
-                    ip_scheme = record["host_ip_scheme"]
-                    if ip_scheme:
-                        idx = self._host_ip_scheme_combo.findText(ip_scheme)
-                        if idx >= 0:
-                            self._host_ip_scheme_combo.setCurrentIndex(idx)
-                    ip_port = record["host_ip_port"]
-                    if ip_port:
-                        self._host_ip_port.setText(str(ip_port))
-            if record["type"] != "WEB":
-                self._username.setText(record["username"])
-                if record["password"] and not record["user_id"]:
-                    self._password.setText(record["password"])
-                    self._add_password_field()
-                if record["user_id"]:
-                    for u in self._users:
-                        if u["id"] == record["user_id"]:
-                            label = f"{u['display_name']} ({u['username']})"
-                            idx = self._user_combo.findText(label)
-                            if idx >= 0:
-                                self._user_combo.setCurrentIndex(idx)
-                            break
-            self._notes.setPlainText(record["notes"])
-
-        self._host.setFocus()
 
         # Spinner overlaid inside self._host, right-aligned
         self._dns_spinner = QLabel(self._host)
@@ -939,6 +884,64 @@ class ConnectionDialog(QDialog):
         self._host_ping_anim_timer = QTimer(self)
         self._host_ping_anim_timer.setInterval(120)
         self._host_ping_anim_timer.timeout.connect(self._tick_host_ping_spinner)
+
+        # Pre-populate — must run after every widget above exists (_set_type
+        # touches _btn_lookup_ip) but before the signals are wired below, so
+        # that setText() here does not kick off DNS lookups and pings.
+        if record:
+            self._alias.setText(record["name"])
+            self._set_type(record["type"])
+            if record["host"]:
+                self._host.setText(record["host"])
+                self._add_host_field("hostname")
+            if record["host_ip"]:
+                self._host_ip.setText(record["host_ip"])
+                self._add_host_field("ip")
+            self._set_prefer(record["host_prefer"])
+            self._port.setText(str(record["port"]))
+            scheme = record["scheme"]
+            if scheme:
+                idx = self._scheme_combo.findText(scheme)
+                if idx >= 0:
+                    self._scheme_combo.setCurrentIndex(idx)
+            # Per-field scheme/port for WEB hosts
+            if record["type"] == "WEB":
+                # Hostname (address) opts
+                if record["host"]:
+                    hn_scheme = record["scheme"] or "https"
+                    idx = self._web_hn_scheme_combo.findText(hn_scheme)
+                    if idx >= 0:
+                        self._web_hn_scheme_combo.setCurrentIndex(idx)
+                    hn_port = record["port"]
+                    default_hn_port = 443 if hn_scheme == "https" else 80
+                    if hn_port != default_hn_port:
+                        self._web_hn_port.setText(str(hn_port))
+                # IP opts
+                if record["host_ip"]:
+                    ip_scheme = record["host_ip_scheme"]
+                    if ip_scheme:
+                        idx = self._host_ip_scheme_combo.findText(ip_scheme)
+                        if idx >= 0:
+                            self._host_ip_scheme_combo.setCurrentIndex(idx)
+                    ip_port = record["host_ip_port"]
+                    if ip_port:
+                        self._host_ip_port.setText(str(ip_port))
+            if record["type"] != "WEB":
+                self._username.setText(record["username"])
+                if record["password"] and not record["user_id"]:
+                    self._password.setText(record["password"])
+                    self._add_password_field()
+                if record["user_id"]:
+                    for u in self._users:
+                        if u["id"] == record["user_id"]:
+                            label = f"{u['display_name']} ({u['username']})"
+                            idx = self._user_combo.findText(label)
+                            if idx >= 0:
+                                self._user_combo.setCurrentIndex(idx)
+                            break
+            self._notes.setPlainText(record["notes"])
+
+        self._host.setFocus()
 
         # Wire signals
         self._dns_resolved.connect(self._on_dns_result)
@@ -3117,7 +3120,7 @@ class App(QMainWindow):
 
                 menu.addSeparator()
 
-                act = QAction(_load_icon("new-window-svgrepo"), "Start additional connection", menu)
+                act = QAction(_load_icon("plus-square-on-square-svgrepo-com"), "Start additional connection", menu)
                 act.triggered.connect(lambda: self._connect(record))
                 menu.addAction(act)
 
