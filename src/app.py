@@ -967,6 +967,9 @@ class ConnectionDialog(QDialog):
                                 self._user_combo.setCurrentIndex(idx)
                             break
             self._notes.setPlainText(record["notes"])
+            # Fields are only now at their final values; _set_type() above decided
+            # the magnifier's visibility against a still-empty IP field.
+            self._sync_ip_lookup_button()
 
         self._host.setFocus()
 
@@ -984,6 +987,18 @@ class ConnectionDialog(QDialog):
             if record["host_ip"] and self._validate_ip(record["host_ip"]):
                 self._ip_ping_debounce.start()
 
+    def _sync_ip_lookup_button(self) -> None:
+        """Show the in-field magnifier only for WEB hosts whose IP is still empty.
+
+        Must be called after any change to the type or to the IP field's text.
+        Pre-populate sets the IP with signals not yet wired, so nothing else
+        re-evaluates it there — leaving the magnifier drawn on top of the IP
+        ping dot.
+        """
+        show = self._btn_web.isChecked() and not self._host_ip.text().strip()
+        self._btn_lookup_ip.setVisible(show)
+        self._host_ip.setTextMargins(0, 0, 26 if show else 18, 0)
+
     def _set_type(self, conn_type: str) -> None:
         self._btn_ssh.setChecked(conn_type == "SSH")
         self._btn_rdp.setChecked(conn_type == "RDP")
@@ -992,9 +1007,7 @@ class ConnectionDialog(QDialog):
         self._credentials_widget.setVisible(not is_web)
         self._port_row_widget.setVisible(not is_web)
         # Show lookup button in IP field when WEB type and field is currently empty
-        show_lookup = is_web and not self._host_ip.text().strip()
-        self._btn_lookup_ip.setVisible(show_lookup)
-        self._host_ip.setTextMargins(0, 0, 26 if show_lookup else 18, 0)
+        self._sync_ip_lookup_button()
         # Show trailing lookup button only for WEB when address is filled and IP not added
         self._btn_lookup_ip_trailing.setVisible(
             is_web and bool(self._host.text().strip()) and self._can_add_ip
@@ -1334,11 +1347,8 @@ class ConnectionDialog(QDialog):
         self._ip_ping_lbl.hide()
         self._ip_last_pinged = ""
         ip = text.strip()
-        is_web = self._btn_web.isChecked()
         # Show lookup button only for WEB when field is empty
-        show_lookup = is_web and not ip
-        self._btn_lookup_ip.setVisible(show_lookup)
-        self._host_ip.setTextMargins(0, 0, 26 if show_lookup else 18, 0)
+        self._sync_ip_lookup_button()
         if ip and self._validate_ip(ip):
             self._ip_ping_debounce.start()
 

@@ -8,46 +8,27 @@ The list is sorted with the next tasks to be done at the top.
 
 # AWAITING TEST             --------------------------------------------------------
 
-Fix: context menu position when right-clicking a second host
-- Right-click host A, then right-click host B without closing the first menu. The menu
-  should now appear under the cursor at B, not back at A.
-- Also re-check right-click -> Edit and right-click -> Delete, since the menu changed
-  from a blocking exec() to a non-blocking popup().
-- (Positioning already confirmed working by developer.)
-
-Change: new-window icon swapped for plus-square-on-square-svgrepo-com.svg
-- Right-click a host that HAS an active connection -> "Start additional connection"
-  should show the new icon. Old new-window-svgrepo.svg was deleted.
-
-Docs: ATTRIBUTIONS.md added and linked from README
-- Skim it -- especially the logo section and the CC BY / GPL notes -- for anything wrong.
-
 Fix: Edit connection button crashed with
 AttributeError: 'ConnectionDialog' object has no attribute '_btn_lookup_ip'
 - Right-click -> Edit on an SSH host, an RDP host and a WEB host.
 - Check each dialog opens pre-filled: name, hostname, IP, port, scheme, username,
   password/saved user, notes.
 - Check a WEB host with both hostname and IP shows the per-field scheme/port values.
-- Check that opening Edit does NOT immediately start a DNS lookup or ping spinner
-  before you type -- pre-populate must stay BEFORE the signal wiring.
+- Pinging on open IS intended (__init__ starts the ping debounces for a record).
+  What must not happen is setText() firing textChanged during pre-populate, which is
+  why pre-populate has to stay BEFORE the signal wiring.
+- The magnifier (look-up-IP) in the IP field should appear ONLY for a WEB host whose
+  IP field is empty -- so: shown for Traefik, hidden for Portainer and Proxmox VE,
+  hidden for every SSH/RDP host. It should never overlap the IP ping dot.
 - Cause: Pre-populate in ConnectionDialog.__init__ called _set_type() before
   _btn_lookup_ip and the ping widgets/timers below it existed. Moved pre-populate to
   after widget creation, still before signal wiring.
-
-Fix: WEB host with a path in its address showed a red status dot
-- The Traefik host (traefik.int.neujkfnordic.com/dashboard/) should now show a green
-  dot. Ping used the whole string including the path, which cannot resolve.
-- Check the other WEB hosts (Portainer, Proxmox VE) still show the right dot and still
-  open the same URL as before.
-- In Add/Edit host, type an address with a path into the Address field: the inline ping
-  dot and the DNS lookup should now work off the bare hostname.
-- Only the ping/DNS path changed; URL building already stripped the path correctly.
 
 # AWAITING IMPLEMENTATION   --------------------------------------------------------
 
 ## Make the program close cleanly on keyboard interrupt in the console
 
-
+## do something about hostnames overflowing when too long. Especially a problem with web hosts that may have long URLS with subdomains and maybe a specific page
 
 
 ## Ping-dot
@@ -57,7 +38,7 @@ Fix: WEB host with a path in its address showed a red status dot
 - In host creation, add a port checker that checks if the port is open on the remote host.
 - Add an orange dot if the failover is used (ex if hostname is primary and unreachable but IP is ok, or if the port is closed but the IP/host is reachable)
 - Add option to disable ping feature - also disables ping in host creation/edit
-- Add support for paths in IP/domains for web hosts. (ping/DNS now strip the path; still to do: verify the path itself returns a valid response)
+- Add support for paths in IP/domains for web hosts.
 - - maybe there should be a two-part ping, where it pings the raw host and then uses some other way to scan if the website path returns a valid response
 
 
