@@ -55,11 +55,6 @@ Most of the set is MIT, CC0 or Public Domain, but three rows carry real obligati
 "About / Credits" view built from it — must be included in the distributed artifact. A
 bare `.exe` with no accompanying credits would not satisfy the CC BY row.
 
-## Logo
-
-`static/logo.png` and `static/logo.ico` are original artwork created for this project.
-They are covered by the project's own licence and require no third-party attribution.
-
 ## Dependencies
 
 - **[PySide6](https://doc.qt.io/qtforpython/)** — Qt for Python, licensed under the
