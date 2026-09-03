@@ -1,8 +1,46 @@
+
+This is a list of outstanding tasks to be done for the project.
+The list only contains pending tasks, completed tasks are removed after being tested.
+The list is sorted with the next tasks to be done at the top.
+
+- Finished tasks are moved to AWAITING TEST, with the specific things to click/check.
+- Never remove an entry from AWAITING TEST. Only the developer is allowed.
+
+# AWAITING TEST             --------------------------------------------------------
+
+Fix: context menu position when right-clicking a second host
+- Right-click host A, then right-click host B without closing the first menu. The menu
+  should now appear under the cursor at B, not back at A.
+- Also re-check right-click -> Edit and right-click -> Delete, since the menu changed
+  from a blocking exec() to a non-blocking popup().
+- (Positioning already confirmed working by developer.)
+
+# AWAITING IMPLEMENTATION   --------------------------------------------------------
+
+
+
+Fix: Edit connection button crashed with
+AttributeError: 'ConnectionDialog' object has no attribute '_btn_lookup_ip'
+- Right-click -> Edit on an SSH host, an RDP host and a WEB host.
+- Check each dialog opens pre-filled: name, hostname, IP, port, scheme, username,
+  password/saved user, notes.
+- Check a WEB host with both hostname and IP shows the per-field scheme/port values.
+- Check that opening Edit does NOT immediately start a DNS lookup or ping spinner
+  before you type -- pre-populate must stay BEFORE the signal wiring.
+- Cause: Pre-populate in ConnectionDialog.__init__ called _set_type() before
+  _btn_lookup_ip and the ping widgets/timers below it existed. Moved pre-populate to
+  after widget creation, still before signal wiring.
+
+Change: new-window icon swapped for plus-square-on-square-svgrepo-com.svg
+- Right-click a host that HAS an active connection -> "Start additional connection"
+  should show the new icon. Old new-window-svgrepo.svg was deleted.
+
+Docs: ATTRIBUTIONS.md added and linked from README
+- Skim it -- especially the logo section and the CC BY / GPL notes -- for anything wrong.
+
+
 !! Propper attributions for icons from svgrepo.com used in the app, ahead of moving repo to public access.
-- DONE: ATTRIBUTIONS.md written with collection/author/license for all 11 icons, linked from README.
-- Still open: confirm origin of static/logo.png + logo.ico.
-- Still open: only the globe is verified as a byte-exact match to its source URL. The other 10 links are unverified (svgrepo blocks scripted downloads via a Vercel JS challenge, so they must be downloaded in a browser to compare).
-- Still open: swap new-window-svgrepo.svg for https://www.svgrepo.com/svg/502925/add-layer -- file on disk is still the old icon.
+- Fill in collection/author/license for plus-square-on-square-svgrepo-com.svg in ATTRIBUTIONS.md -- the last unattributed icon. Assumed to be https://www.svgrepo.com/svg/437159/plus-square-on-square but unconfirmed.
 - paperplane (Font Awesome) is CC BY: credit must reach the END USER, so ATTRIBUTIONS.md (or an in-app About/Credits view) has to ship with the distributed exe -- ties into the distribution item below.
 - settings2 icon is GPL. Fine for this project, but it would block any future relicense to something permissive. Swapping that one icon would remove the constraint.
 

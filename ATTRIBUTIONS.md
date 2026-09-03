@@ -20,7 +20,7 @@ listed below.
 | `globe-europe-solid-svgrepo-com.svg` | WEB host open actions | [314050](https://www.svgrepo.com/svg/314050/globe-europe-solid) | Line Awesome | Icons8 | MIT |
 | `locate-svgrepo.svg` | "Locate window(s)" context menu | [510051](https://www.svgrepo.com/svg/510051/locate) | Zest Interface Icons | zest | MIT |
 | `move-here-svgrepo.svg` | "Move to this monitor" context menu | [470984](https://www.svgrepo.com/svg/470984/arrow-circle-broken-down-left) | Ui Oval Interface Icons | SVG Repo (uploader) | CC0 |
-| `new-window-svgrepo.svg` | "Start additional connection" context menu | _see note_ | _unidentified_ | _unidentified_ | _unidentified_ |
+| `plus-square-on-square-svgrepo-com.svg` | "Start additional connection" context menu | [437159](https://www.svgrepo.com/svg/437159/plus-square-on-square) | _TODO_ | _TODO_ | _TODO_ |
 | `paperplane-svgrepo.svg` | "Connect" card hover + context menu | [352315](https://www.svgrepo.com/svg/352315/paper-plane) | Font Awesome Solid Icons | FortAwesome | **CC BY** |
 | `plus-svgrepo.svg` | "Add host" toolbar button | [509386](https://www.svgrepo.com/svg/509386/plus) | Nataicons Oval Tiny Line Icons | afnizarnur | MIT |
 | `settings-svgrepo.svg` | "Settings" toolbar button | [498931](https://www.svgrepo.com/svg/498931/settings2) | Uxwb Bold Line Icons | UXWB | **GPL** |
@@ -28,12 +28,11 @@ listed below.
 Icons are recolored at runtime by `_load_icon()` in [`src/app.py`](src/app.py) via string
 replacement on the SVG source. The source files themselves are unmodified.
 
-> **Note on `new-window-svgrepo.svg`** — this is the one icon whose original SVG Repo page
-> could not be located again, so its collection and licence are unknown. It is scheduled
-> to be replaced by [add-layer](https://www.svgrepo.com/svg/502925/add-layer) (Kalai Oval
-> Interface Icons, by Ananthanath A X Kalaiism, Public Domain), which resolves the gap.
-> Until that swap happens this file ships without attribution — worth closing before the
-> repository goes public.
+> **Note on `plus-square-on-square-svgrepo-com.svg`** — this icon replaced an earlier
+> `new-window` icon whose SVG Repo page could not be located again. The source URL above
+> is inferred from the filename and has not been confirmed against the page, so its
+> collection, author and licence are still unfilled. This is the last remaining
+> attribution gap — worth closing before the repository goes public.
 
 ### Licence obligations
 
@@ -58,9 +57,8 @@ bare `.exe` with no accompanying credits would not satisfy the CC BY row.
 
 ## Logo
 
-`static/logo.png` and `static/logo.ico` — _TODO: confirm origin._ If these are original
-artwork they are covered by the project licence and this section can say so; if they came
-from elsewhere they need a row like the icons above.
+`static/logo.png` and `static/logo.ico` are original artwork created for this project.
+They are covered by the project's own licence and require no third-party attribution.
 
 ## Dependencies
 
