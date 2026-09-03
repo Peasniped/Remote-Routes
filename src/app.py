@@ -11,7 +11,7 @@ import time
 from typing import Optional
 
 from PySide6.QtCore import Qt, QRectF, QSize, QTimer, Signal, QObject, QPoint, QBuffer, QByteArray, QIODevice
-from PySide6.QtGui import QAction, QBitmap, QColor, QFont, QFontMetrics, QIcon, QImage, QPalette, QPainter, QPainterPath, QPen, QPixmap, QRegion
+from PySide6.QtGui import QAction, QBitmap, QColor, QCursor, QFont, QFontMetrics, QIcon, QImage, QPalette, QPainter, QPainterPath, QPen, QPixmap, QRegion
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import (
     QApplication,
@@ -1771,7 +1771,7 @@ class HostCard(QWidget):
         self._dot_count = 0
         # Pre-load hover icons once per card (QApp already running at this point)
         self._icon_connect = _load_icon("paperplane-svgrepo", color="white", size=26)
-        self._icon_open = _load_icon("globe-svgrepo", color="white", size=26)
+        self._icon_open = _load_icon("globe-europe-solid-svgrepo-com", color="white", size=26)
         self._icon_bring = _load_icon("bring-to-front-svgrepo", color="white", size=26)
 
         # ── inner card frame ──────────────────────────────────────────────
@@ -1924,7 +1924,12 @@ class HostCard(QWidget):
         if event.button() == Qt.LeftButton:
             self._on_left(self._record)
         elif event.button() == Qt.RightButton:
-            self._on_right(self._record, event.globalPosition().toPoint())
+            # QCursor.pos() rather than event.globalPosition(): when a context
+            # menu is already open, the click that dismisses it is *replayed*
+            # to the card underneath, and the replayed event still carries the
+            # coordinates of the original click. The live cursor position is
+            # always where the user actually clicked.
+            self._on_right(self._record, QCursor.pos())
         super().mousePressEvent(event)
 
     def enterEvent(self, event) -> None:
@@ -2530,6 +2535,7 @@ class App(QMainWindow):
         self._popen_hwnds: set[int] = set()             # HWNDs discovered for Popen-backed launches
         self._launch_counter: int = 0                   # unique tag suffix
         self._connecting_cids: set[int] = set()         # cids currently connecting
+        self._ctx_menu: QMenu | None = None             # currently open context menu
 
         # Connect ping bus (emitted from background threads)
         _ping_bus.result.connect(self._set_ping)
@@ -3061,6 +3067,15 @@ class App(QMainWindow):
             self._connect(record)
 
     def _on_card_right(self, record, pos: QPoint) -> None:
+        # Dismiss a menu left open on another card, so we never stack a second
+        # menu inside the first one's blocking exec() loop. Deleting it here
+        # rather than on close keeps at most one stale menu alive, and avoids
+        # tearing a menu down while one of its own actions is still running.
+        if self._ctx_menu is not None:
+            self._ctx_menu.close()
+            self._ctx_menu.deleteLater()
+            self._ctx_menu = None
+
         menu = QMenu(self)
         if record["type"] == "WEB":
             host = record["host"]
@@ -3069,21 +3084,21 @@ class App(QMainWindow):
                 prefer_ip = record["host_prefer"] == "ip"
                 # Default action first (matches what left-click does)
                 if prefer_ip:
-                    act = QAction(_load_icon("globe-svgrepo"), "Open with IP", menu)
+                    act = QAction(_load_icon("globe-europe-solid-svgrepo-com"), "Open with IP", menu)
                     act.triggered.connect(lambda: self._open_web_url(record, use="ip"))
                     menu.addAction(act)
-                    act = QAction(_load_icon("globe-svgrepo"), "Open with Hostname", menu)
+                    act = QAction(_load_icon("globe-europe-solid-svgrepo-com"), "Open with Hostname", menu)
                     act.triggered.connect(lambda: self._open_web_url(record, use="hostname"))
                     menu.addAction(act)
                 else:
-                    act = QAction(_load_icon("globe-svgrepo"), "Open with Hostname", menu)
+                    act = QAction(_load_icon("globe-europe-solid-svgrepo-com"), "Open with Hostname", menu)
                     act.triggered.connect(lambda: self._open_web_url(record, use="hostname"))
                     menu.addAction(act)
-                    act = QAction(_load_icon("globe-svgrepo"), "Open with IP", menu)
+                    act = QAction(_load_icon("globe-europe-solid-svgrepo-com"), "Open with IP", menu)
                     act.triggered.connect(lambda: self._open_web_url(record, use="ip"))
                     menu.addAction(act)
             else:
-                act = QAction(_load_icon("globe-svgrepo"), "Open", menu)
+                act = QAction(_load_icon("globe-europe-solid-svgrepo-com"), "Open", menu)
                 act.triggered.connect(lambda: self._open_web_url(record))
                 menu.addAction(act)
             menu.addSeparator()
@@ -3125,7 +3140,10 @@ class App(QMainWindow):
         act.triggered.connect(lambda: self._delete_host(record))
         menu.addAction(act)
 
-        menu.exec(pos)
+        # popup() instead of exec(): non-blocking, so right-clicking another
+        # card does not nest a second event loop inside this one.
+        self._ctx_menu = menu
+        menu.popup(pos)
 
     # ── Actions ───────────────────────────────────────────────────────────
     def _collect_hwnds(self, cid: int) -> list[int]:
