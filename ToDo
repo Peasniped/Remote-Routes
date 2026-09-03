@@ -1,6 +1,10 @@
 !! Propper attributions for icons from svgrepo.com used in the app, ahead of moving repo to public access.
-
-Bug: If I rightclick one remote host, then rightclick another remote host, the context menu content changes (as it should), but the position is not updated.
+- DONE: ATTRIBUTIONS.md written with collection/author/license for all 11 icons, linked from README.
+- Still open: confirm origin of static/logo.png + logo.ico.
+- Still open: only the globe is verified as a byte-exact match to its source URL. The other 10 links are unverified (svgrepo blocks scripted downloads via a Vercel JS challenge, so they must be downloaded in a browser to compare).
+- Still open: swap new-window-svgrepo.svg for https://www.svgrepo.com/svg/502925/add-layer -- file on disk is still the old icon.
+- paperplane (Font Awesome) is CC BY: credit must reach the END USER, so ATTRIBUTIONS.md (or an in-app About/Credits view) has to ship with the distributed exe -- ties into the distribution item below.
+- settings2 icon is GPL. Fine for this project, but it would block any future relicense to something permissive. Swapping that one icon would remove the constraint.
 
 
 Ping-dot
@@ -68,10 +72,22 @@ Code restructure
 - - ui module/folder where each class is its own file for better readability?
 - Implement OOP where it makes sense
 
+## Propper installation/distribution method
+- User downloads an exe or similar
+- Must ship ATTRIBUTIONS.md (or an in-app About/Credits view) with the artifact -- the Font Awesome paperplane icon is CC BY and its credit has to reach the end user, not just the repo.
+
 ## Maybe later
 - Add host to multiple host groups -- does it make sense?
 - Some way of combining multiple protocols for the same remote host, ex, if you want to SSH and RDP into the same host, but not have a bunch of hostcards cluttering up the list. -- what would be the better solution here?
 - Fix flickering of windows right before startup. It's like a few tiny windows with no content (only header bar with minimize, maximize, exit buttons) are shown for a very short moment before ultimately the main dashboard is displayed and the app is ready.
 - - It also comes up when i use the search function (like for every letter IF there is a result. If there are no results, i can type as much as I want and nothing apears.)
 - - It must have something to do with either the hostcard or the database.
+
+## Sync
+Some way to sync the connection entries, maybe to a git repo.
+- So that the Remote Routes app ships with an integrated git client
+- Can both pull and push from a repo
+- That way users can store their connections in a private repo on ex Github.
+- Maybe omit the password field, and when a user imports a bunch of connections, it would ask for the password on the first connection, and ask if they want to save it to the local database.
+- - in other words, passwords are not synced.
 

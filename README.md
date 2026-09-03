@@ -47,6 +47,7 @@ Remote-Routes/
 ├── static/icons/        # SVG icons
 ├── instance/            # Runtime data (SQLite DB, created automatically)
 ├── requirements.txt
+├── ATTRIBUTIONS.md      # Third-party assets and their licenses
 └── LICENSE              # GPL
 ```
 
@@ -80,6 +81,11 @@ All data is stored in a local SQLite database at `instance/.remote_routes.db`. T
 - **Theming** — light theme toggle, fully configurable color schemes
 - **Host grouping** — create/collapse groups, drag-and-drop reordering
 - **Security review** — audit password storage
+
+## Attributions
+
+Icons are from [SVG Repo](https://www.svgrepo.com/). See [ATTRIBUTIONS.md](ATTRIBUTIONS.md)
+for the full list of third-party assets and their licenses.
 
 ## License
 
