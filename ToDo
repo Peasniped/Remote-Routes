@@ -8,21 +8,7 @@ The list is sorted with the next tasks to be done at the top.
 
 # AWAITING TEST             --------------------------------------------------------
 
-Fix: Edit connection button crashed with
-AttributeError: 'ConnectionDialog' object has no attribute '_btn_lookup_ip'
-- Right-click -> Edit on an SSH host, an RDP host and a WEB host.
-- Check each dialog opens pre-filled: name, hostname, IP, port, scheme, username,
-  password/saved user, notes.
-- Check a WEB host with both hostname and IP shows the per-field scheme/port values.
-- Pinging on open IS intended (__init__ starts the ping debounces for a record).
-  What must not happen is setText() firing textChanged during pre-populate, which is
-  why pre-populate has to stay BEFORE the signal wiring.
-- The magnifier (look-up-IP) in the IP field should appear ONLY for a WEB host whose
-  IP field is empty -- so: shown for Traefik, hidden for Portainer and Proxmox VE,
-  hidden for every SSH/RDP host. It should never overlap the IP ping dot.
-- Cause: Pre-populate in ConnectionDialog.__init__ called _set_type() before
-  _btn_lookup_ip and the ping widgets/timers below it existed. Moved pre-populate to
-  after widget creation, still before signal wiring.
+
 
 # AWAITING IMPLEMENTATION   --------------------------------------------------------
 
