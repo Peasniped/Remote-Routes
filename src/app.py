@@ -1020,7 +1020,8 @@ class ConnectionDialog(QDialog):
         self._btn_add_hn_trailing.setText(add_hn_text)
         if not is_web:
             cur = self._port.text().strip()
-            if cur in ("", "80", "443"):
+            # Swap in the new default unless the user typed a custom port
+            if cur in ("", "80", *(str(p) for p in _DEFAULT_PORTS.values())):
                 self._port.setText(str(_DEFAULT_PORTS[conn_type]))
         # Rebuild layout so web opts widgets show/hide correctly
         self._rebuild_host_order()
