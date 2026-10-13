@@ -82,13 +82,29 @@ def launch_ssh(
     return subprocess.Popen(prefix + ssh_cmd)
 
 
+def _set_rdp_username_hint(host: str, port: int, username: str) -> None:
+    """Store *username* as mstsc's remembered login for *host*."""
+    try:
+        import winreg
+        base = r"Software\Microsoft\Terminal Server Client\Servers"
+        # mstsc keys the entry by the address as typed, with or without port
+        for server in (host, f"{host}:{port}"):
+            with winreg.CreateKey(winreg.HKEY_CURRENT_USER, rf"{base}\{server}") as key:
+                winreg.SetValueEx(key, "UsernameHint", 0, winreg.REG_SZ, username)
+    except OSError as exc:
+        log.debug("could not set RDP username hint for %r: %s", host, exc)
+
+
 def launch_rdp(host: str, port: int, username: str) -> subprocess.Popen:
     """Open an RDP session and return the process handle."""
     if sys.platform == "win32":
-        mstsc_args = ["mstsc", f"/v:{host}:{port}"]
+        # mstsc has no username switch (an unknown one just shows its usage
+        # dialog), and launching via an unsigned .rdp file triggers a security
+        # warning on every connect.  Instead, pre-fill the login prompt through
+        # the same registry hint mstsc uses to remember usernames.
         if username:
-            mstsc_args += [f"/u:{username}"]
-        return subprocess.Popen(mstsc_args)
+            _set_rdp_username_hint(host, port, username)
+        return subprocess.Popen(["mstsc", f"/v:{host}:{port}"])
 
     if sys.platform == "darwin":
         rdp_url = f"rdp://full%20address=s:{host}:{port}"
