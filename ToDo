@@ -8,6 +8,16 @@ The list is sorted with the next tasks to be done at the top.
 
 # AWAITING TEST             --------------------------------------------------------
 
+## RDP launch on Windows (needs access to an RDP server)
+- Connect to an RDP host that has a username set: mstsc should open straight to connecting, no usage/help box and no "Unknown remote connection" warning.
+- The login prompt should have the host's username pre-filled.
+- Log in and check the session actually opens.
+- Check the host card picks up a screenshot of the RDP window while the session is open.
+
+## Default port when switching host type
+- In the host dialog, switch SSH -> RDP: port changes 22 -> 3389. Switch back: 3389 -> 22.
+- Type a custom port (e.g. 2222), switch type: the custom port is kept.
+- Edit an existing host: its saved port is shown, not overwritten by the default.
 
 
 # AWAITING IMPLEMENTATION   --------------------------------------------------------
